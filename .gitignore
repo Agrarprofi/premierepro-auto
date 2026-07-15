@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.env
+.venv/
+venv/
+projects/
+music_library/
+presets/*.yaml
+!presets/.gitkeep
+.pytest_cache/
+.DS_Store
+*.egg-info/

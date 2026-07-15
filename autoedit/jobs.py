@@ -1,0 +1,76 @@
+"""Einfacher Hintergrund-Job-Manager mit Fortschrittsanzeige fürs Dashboard."""
+
+from __future__ import annotations
+
+import threading
+import traceback
+import uuid
+from dataclasses import dataclass, field
+from typing import Any, Callable
+
+
+@dataclass
+class Job:
+    id: str
+    name: str
+    status: str = "laeuft"  # laeuft | fertig | fehler
+    fortschritt: float = 0.0
+    meldung: str = ""
+    fehler: str | None = None
+    ergebnis: Any = None
+
+    def as_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "status": self.status,
+            "fortschritt": round(self.fortschritt, 3),
+            "meldung": self.meldung,
+            "fehler": self.fehler,
+            "ergebnis": self.ergebnis,
+        }
+
+
+@dataclass
+class JobManager:
+    _jobs: dict[str, Job] = field(default_factory=dict)
+    _lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def start(self, name: str, fn: Callable[..., Any]) -> Job:
+        """Startet fn(progress) in einem Thread. progress(f, meldung) meldet Stand."""
+        job = Job(id=uuid.uuid4().hex[:12], name=name)
+        with self._lock:
+            self._jobs[job.id] = job
+
+        def progress(fraction: float, meldung: str = "") -> None:
+            job.fortschritt = max(0.0, min(1.0, float(fraction)))
+            if meldung:
+                job.meldung = meldung
+
+        def runner() -> None:
+            try:
+                job.ergebnis = fn(progress)
+                job.status = "fertig"
+                job.fortschritt = 1.0
+            except Exception as exc:  # noqa: BLE001 - Fehler ans Dashboard melden
+                job.status = "fehler"
+                job.fehler = f"{type(exc).__name__}: {exc}"
+                job.meldung = str(exc)
+                traceback.print_exc()
+
+        threading.Thread(target=runner, name=f"job-{job.id}", daemon=True).start()
+        return job
+
+    def get(self, job_id: str) -> Job | None:
+        with self._lock:
+            return self._jobs.get(job_id)
+
+    def running_for(self, name_prefix: str) -> Job | None:
+        with self._lock:
+            for job in self._jobs.values():
+                if job.status == "laeuft" and job.name.startswith(name_prefix):
+                    return job
+        return None
+
+
+MANAGER = JobManager()
