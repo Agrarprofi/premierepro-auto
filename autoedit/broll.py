@@ -28,9 +28,15 @@ def extract_frames(project: str, clip: Path) -> list[Path]:
     if out_dir.is_dir():
         shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    # out_range=full + format=yuv420p: Kamera-Material ist meist Limited-Range
+    # (und teils 10-Bit-HEVC); der JPEG-Encoder in neueren ffmpeg-Versionen
+    # bricht sonst ab ("Non full-range YUV is non-standard").
     ffmpeg_utils.run([
         "ffmpeg", "-y", "-v", "error", "-i", str(clip),
-        "-vf", f"fps=1/{FRAME_INTERVAL_SEC},scale='min({FRAME_MAX_PX},iw)':-2",
+        "-vf", (f"fps=1/{FRAME_INTERVAL_SEC},"
+                f"scale='min({FRAME_MAX_PX},iw)':-2:out_range=full,"
+                "format=yuv420p"),
+        "-strict", "unofficial",
         "-q:v", "4", str(out_dir / "frame_%04d.jpg"),
     ])
     return sorted(out_dir.glob("frame_*.jpg"))
