@@ -121,3 +121,94 @@ def test_build_timeline_warns_on_missing_coverage(projekt, fake_claude):
     timeline = fcpxml.build_timeline(projekt)
     assert timeline["dauer"] == pytest.approx(cutting.reel_dauer(projekt))
     assert (paths.output_dir(projekt) / "timeline.json").is_file()
+
+
+def test_fcpxml_stereo_audio_becomes_track_pair(projekt, fake_claude, media):
+    """Stereo-DJI (2 Sender!) muss als zwei Spuren mit trackindex 1/2
+    exportiert werden, sonst verliert Premiere den rechten Kanal."""
+    import numpy as np
+    from scipy.io import wavfile
+    from tests.conftest import SR
+
+    base = paths.project_dir(projekt)
+    ref = media["ref"]
+    stereo = np.stack([ref, ref * 0.5], axis=1)
+    wavfile.write(base / "input/audio_dji/dji.wav", SR,
+                  (stereo * 32767).astype(np.int16))
+
+    prepared_project(projekt, fake_claude, with_broll=False)
+    out = fcpxml.generate_fcpxml(projekt)
+    tree = ET.parse(out)
+    atracks = tree.getroot().findall("sequence/media/audio/track")
+    # A1-Gruppe = 2 Spuren (stereo), A2 = 1 (Kamera mono), A3 = 1 (leer)
+    assert len(atracks) == 4
+
+    def indices(track):
+        return [ci.find("sourcetrack/trackindex").text
+                for ci in track.findall("clipitem")]
+
+    assert set(indices(atracks[0])) == {"1"}
+    assert set(indices(atracks[1])) == {"2"}
+    assert len(indices(atracks[0])) == len(indices(atracks[1])) == 2
+    # A2 (Kamera-Backup) bleibt deaktiviert
+    assert atracks[2].find("enabled").text == "FALSE"
+    # Datei deklariert die echten 2 Kanäle
+    for f in tree.getroot().iter("file"):
+        name = f.find("name")
+        if name is not None and name.text == "dji.wav":
+            assert f.find("media/audio/channelcount").text == "2"
+            break
+    else:
+        raise AssertionError("dji.wav-Fileblock nicht gefunden")
+
+
+def test_fcpxml_video_without_audio_declares_no_audio(projekt, fake_claude):
+    """B-Roll ohne Tonspur darf im <file>-Block kein Audio deklarieren."""
+    prepared_project(projekt, fake_claude)  # B-Roll-Clips sind tonlos
+    out = fcpxml.generate_fcpxml(projekt)
+    tree = ET.parse(out)
+    for f in tree.getroot().iter("file"):
+        name = f.find("name")
+        if name is not None and name.text == "broll_traktor.mp4":
+            assert f.find("media/audio") is None
+            assert f.find("media/video") is not None
+            return
+    raise AssertionError("broll_traktor.mp4-Fileblock nicht gefunden")
+
+
+def test_fcpxml_mixed_framerate_and_resolution_broll(projekt, fake_claude, media):
+    """50p-B-Roll in 320x180 in einer 25p/640x360-Sequenz:
+    Quell-In/Out in der nativen 50p-Rate, Scale-to-fill auch im
+    'quelle'-Export."""
+    from autoedit import broll, ingest
+    from tests.conftest import make_broll
+
+    prepared_project(projekt, fake_claude, with_broll=False)
+    base = paths.project_dir(projekt)
+    make_broll(base / "input/broll/broll50.mp4", rate=50, size="320x180")
+    ingest.scan_project(projekt)  # neue Datei erfassen
+    broll.save_matches(projekt, {"projekt": projekt, "matches": [{
+        "id": "m50", "transkript_zeit": 4.0,
+        "broll_datei": "input/broll/broll50.mp4",
+        "broll_einstieg": 1.0, "dauer": 2.0,
+        "begruendung": "", "thumbnail": None,
+    }]})
+
+    out = fcpxml.generate_fcpxml(projekt)
+    tree = ET.parse(out)
+    v3 = tree.getroot().findall("sequence/media/video/track")[2]
+    item = v3.find("clipitem")
+    assert item is not None
+    # Timeline-Frames in Sequenzrate (25), Quell-Frames in Dateirate (50)
+    assert item.find("rate/timebase").text == "50"
+    assert int(item.find("start").text) == 100   # 4.0 s * 25
+    assert int(item.find("end").text) == 150     # 6.0 s * 25
+    assert int(item.find("in").text) == 50       # 1.0 s * 50
+    assert int(item.find("out").text) == 150     # (1.0+2.0) s * 50
+    # Scale-to-fill trotz export_format="quelle": max(640/320, 360/180)*100
+    params = {p.find("parameterid").text: p.find("value").text
+              for p in item.iter("parameter")}
+    assert float(params["scale"]) == pytest.approx(200.0, abs=0.1)
+    # Datei-Block traegt die native Rate
+    fileblock = item.find("file")
+    assert fileblock.find("rate/timebase").text == "50"

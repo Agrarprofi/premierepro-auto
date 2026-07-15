@@ -65,10 +65,11 @@ def make_camera(path: Path, ref: np.ndarray, start: float, dur: float,
     tmp_wav.unlink()
 
 
-def make_broll(path: Path, dur: float = 8.0, pattern: str = "testsrc2") -> None:
+def make_broll(path: Path, dur: float = 8.0, pattern: str = "testsrc2",
+               rate: int = 25, size: str = "640x360") -> None:
     _run([
         "ffmpeg", "-y", "-v", "error",
-        "-f", "lavfi", "-i", f"{pattern}=duration={dur}:size=640x360:rate=25",
+        "-f", "lavfi", "-i", f"{pattern}=duration={dur}:size={size}:rate={rate}",
         "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
         str(path),
     ])

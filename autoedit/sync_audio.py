@@ -24,6 +24,11 @@ SYNC_SR = 16000
 ENV_SR = 100  # Hüllkurven-Samplerate für die Grobsuche
 FINE_CHUNK_SEC = 30.0  # max. Clip-Ausschnitt für die Feinsuche
 FINE_PAD_SEC = 1.0
+# Unterhalb dieser Korrelation gilt ein Clip als "ohne Referenz-Überlappung"
+# und wird sequenziell hinter seinen Vorgänger gelegt statt auf einen
+# Zufallspeak. Gleiche Aufnahme über verschiedene Mikros liegt real >> 0.1,
+# nicht überlappendes Material erfahrungsgemäß < 0.05.
+MIN_KONFIDENZ = 0.10
 
 
 def _load_wav_mono(path: Path) -> np.ndarray:
@@ -84,11 +89,14 @@ def find_offset(ref: np.ndarray, clip: np.ndarray, sr: int = SYNC_SR) -> tuple[f
 
     pad = int(FINE_PAD_SEC * sr)
     r_expect = int(round(c0 + coarse * sr))
+    if r_expect < 0 or r_expect + chunk_len > len(ref):
+        # Erwartete Position ragt über die Referenz hinaus: die Feinsuche
+        # würde auf einen Zufallspeak im Fenster laufen -> Grobergebnis nutzen.
+        return coarse, _ncc_at(ref, clip, coarse, sr)
     w0 = max(0, r_expect - pad)
     w1 = min(len(ref), r_expect + chunk_len + pad)
     ref_win = ref[w0:w1]
     if len(ref_win) < len(chunk):
-        # Clip ragt über die Referenz hinaus -> nur Grobergebnis nutzbar
         return coarse, _ncc_at(ref, clip, coarse, sr)
 
     fine = signal.correlate(ref_win, chunk, mode="valid", method="fft")
@@ -96,6 +104,9 @@ def find_offset(ref: np.ndarray, clip: np.ndarray, sr: int = SYNC_SR) -> tuple[f
     k_interp = _parabolic(fine, k)
     offset_samples = (w0 + k_interp) - c0
     offset = offset_samples / sr
+    if abs(offset - coarse) > FINE_PAD_SEC:
+        # Feinsuche widerspricht der Grobsuche deutlich -> Grobergebnis behalten
+        return coarse, _ncc_at(ref, clip, coarse, sr)
 
     ref_seg = ref_win[k : k + len(chunk)]
     denom = float(np.linalg.norm(ref_seg) * np.linalg.norm(chunk))
@@ -120,8 +131,16 @@ def _ncc_at(ref: np.ndarray, clip: np.ndarray, offset: float, sr: int) -> float:
 
 def _tmp_wav(project: str, src: Path) -> Path:
     out = paths.output_dir(project) / "tmp" / "sync"
-    rel = src.name + ".16k.wav"
-    dst = out / rel
+    # Cache-Schlüssel aus dem relativen Pfad, nicht nur dem Dateinamen:
+    # zwei baugleiche Kameras liefern identische Namen (C0001.MP4 in cam_a
+    # UND cam_b) und dürfen sich nicht denselben Cache-Eintrag teilen.
+    try:
+        rel = str(src.resolve().relative_to(paths.project_dir(project).resolve()))
+    except ValueError:
+        import hashlib
+
+        rel = hashlib.md5(str(src.resolve()).encode()).hexdigest()[:12] + "_" + src.name
+    dst = out / (rel.replace("/", "__") + ".16k.wav")
     if not dst.is_file() or dst.stat().st_mtime < src.stat().st_mtime:
         ffmpeg_utils.extract_audio_wav(src, dst, sample_rate=SYNC_SR, mono=True)
     return dst
@@ -164,6 +183,11 @@ def compute_offsets(project: str, progress=None) -> dict:
         try:
             clip = _load_wav_mono(_tmp_wav(project, f))
             offset, konf = find_offset(ref, clip)
+            if konf < MIN_KONFIDENZ:
+                raise ValueError(
+                    f"Korrelation zu schwach (Konfidenz {konf:.3f}) – "
+                    "vermutlich keine Überlappung mit der Referenz"
+                )
             offsets[rel] = {"offset_sekunden": round(offset, 6),
                             "konfidenz": round(konf, 3)}
             seq_end[role] = offset + len(clip) / SYNC_SR
@@ -221,6 +245,44 @@ def clip_for_ref_time(project: str, media: dict, sync: dict, role: str,
         if off <= ref_time < off + float(clip["dauer"]):
             return clip, ref_time - off
     return None
+
+
+def cover_range(media: dict, sync: dict, role: str, ref_start: float,
+                ref_end: float) -> tuple[list[dict], float]:
+    """Referenzbereich [ref_start, ref_end) mit Clips einer Rolle abdecken.
+
+    Ein Segment kann über eine Clip-Grenze laufen (Kameras splitten bei 4 GB);
+    dann wird es aus mehreren Stücken zusammengesetzt. Rückgabe:
+    (stücke, unabgedeckte_sekunden); jedes Stück hat clip, src_in,
+    rel_start (Position im Segment) und dauer.
+    """
+    spans = []
+    for clip in ingest.clips_by_role(media).get(role, []):
+        entry = sync["offsets"].get(clip["relpfad"])
+        if entry is None:
+            continue
+        off = float(entry["offset_sekunden"])
+        spans.append((off, off + float(clip["dauer"]), clip))
+    spans.sort(key=lambda s: s[0])
+
+    pieces: list[dict] = []
+    t = ref_start
+    for off, end, clip in spans:
+        if end <= t + 1e-6 or off >= ref_end - 1e-6:
+            continue
+        piece_start = max(t, off)
+        piece_end = min(ref_end, end)
+        if piece_end - piece_start < 1e-3:
+            continue
+        pieces.append({
+            "clip": clip,
+            "src_in": piece_start - off,
+            "rel_start": piece_start - ref_start,
+            "dauer": piece_end - piece_start,
+        })
+        t = piece_end
+    uncovered = (ref_end - ref_start) - sum(p["dauer"] for p in pieces)
+    return pieces, max(0.0, uncovered)
 
 
 def render_sync_preview(project: str, dauer: float = 10.0) -> Path:

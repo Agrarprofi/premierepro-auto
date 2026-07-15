@@ -220,24 +220,27 @@ def render_cut_preview(project: str, progress=None) -> Path:
     for i, seg in enumerate(segs):
         if progress:
             progress(i / max(1, len(segs)), f"Rendere Segment {i + 1}/{len(segs)}")
-        hit = sync_audio.clip_for_ref_time(project, media, sync, "cam_a", seg["start"])
-        if hit is None:
+        pieces, _ = sync_audio.cover_range(media, sync, "cam_a",
+                                           seg["start"], seg["ende"])
+        if not pieces:
             raise RuntimeError(
                 f"Kein Kamera-A-Clip deckt Segment bei {seg['start']:.2f}s ab."
             )
-        clip, src_t = hit
-        dauer = min(seg["dauer"], float(clip["dauer"]) - src_t)
-        part = tmp / f"part_{i:03d}.mp4"
-        ffmpeg_utils.run([
-            "ffmpeg", "-y", "-v", "error",
-            "-ss", f"{src_t:.3f}", "-t", f"{dauer:.3f}",
-            "-i", str(base / clip["relpfad"]),
-            "-ss", f"{seg['start']:.3f}", "-t", f"{dauer:.3f}", "-i", str(ref_path),
-            "-map", "0:v:0", "-map", "1:a:0",
-            "-vf", "scale=-2:720,fps=25", "-c:v", "libx264", "-preset", "veryfast",
-            "-crf", "23", "-c:a", "aac", "-ar", "48000", "-shortest", str(part),
-        ])
-        parts.append(part)
+        for j, p in enumerate(pieces):
+            ref_start = seg["start"] + p["rel_start"]
+            part = tmp / f"part_{i:03d}_{j:02d}.mp4"
+            ffmpeg_utils.run([
+                "ffmpeg", "-y", "-v", "error",
+                "-ss", f"{p['src_in']:.3f}", "-t", f"{p['dauer']:.3f}",
+                "-i", str(base / p["clip"]["relpfad"]),
+                "-ss", f"{ref_start:.3f}", "-t", f"{p['dauer']:.3f}",
+                "-i", str(ref_path),
+                "-map", "0:v:0", "-map", "1:a:0",
+                "-vf", "scale=-2:720,fps=25", "-c:v", "libx264",
+                "-preset", "veryfast", "-crf", "23",
+                "-c:a", "aac", "-ar", "48000", "-shortest", str(part),
+            ])
+            parts.append(part)
 
     concat_list = tmp / "concat.txt"
     concat_list.write_text(

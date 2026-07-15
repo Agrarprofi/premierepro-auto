@@ -2,15 +2,21 @@
 über Datei > Importieren.
 
 Sequenzaufbau:
-  V1: Kamera A (nach Segmenten geschnitten)
+  V1: Kamera A (nach Segmenten geschnitten, Clip-Grenzen werden überbrückt)
   V2: Kamera B (synchron, gleiche Schnitte)
   V3: B-Rolls an den zugeordneten Stellen
   A1: Referenz-Audio (DJI, synchron geschnitten)
   A2: Kamera-A-Ton, Spur deaktiviert (Backup)
   A3: Musik, -18 dB Startpegel
 
+Stereo-Quellen werden als zwei verknüpfte Spuren exportiert (trackindex 1/2),
+sonst verwirft Premiere den rechten Kanal. Jede Datei deklariert ihre native
+Framerate; Quell-In/Out werden in der Datei-Framerate gerechnet, Timeline-
+Positionen in der Sequenz-Framerate. Clips, deren Auflösung von der Sequenz
+abweicht, bekommen einen zentrierten Scale-to-fill-Filter (Basic Motion).
+
 Alle Zeiten werden erst als Sekunden-Timeline gebaut (build_timeline) und dann
-framegenau in die Sequenz-Timebase umgerechnet – das hält die Logik testbar.
+framegenau umgerechnet – das hält die Logik testbar.
 """
 
 from __future__ import annotations
@@ -47,6 +53,28 @@ def to_frames(seconds: float, fps: float) -> int:
 
 # ------------------------------------------------------------ Timeline-Modell
 
+def _media_lookup(media: dict) -> dict[str, dict]:
+    return {c["relpfad"]: c for c in media.get("clips", [])}
+
+
+def _event_from_clip(base: Path, clip: dict, timeline_start: float, dauer: float,
+                     src_in: float, **extra) -> dict:
+    return {
+        "datei": str(base / clip["relpfad"]),
+        "name": clip["name"],
+        "timeline_start": round(timeline_start, 6),
+        "dauer": round(dauer, 6),
+        "src_in": round(src_in, 6),
+        "datei_dauer": float(clip["dauer"]),
+        "breite": clip.get("breite"),
+        "hoehe": clip.get("hoehe"),
+        "fps": clip.get("fps"),
+        "audio_kanaele": clip.get("audio_kanaele"),
+        "audio_samplerate": clip.get("audio_samplerate"),
+        **extra,
+    }
+
+
 def build_timeline(project: str) -> dict:
     """Sekundengenaues Timeline-Modell aus Segmenten/Sync/B-Roll/Musik."""
     cfg = config.load_config(project)
@@ -60,6 +88,7 @@ def build_timeline(project: str) -> dict:
 
     base = paths.project_dir(project)
     by_role = ingest.clips_by_role(media)
+    lookup = _media_lookup(media)
     cam_a = by_role.get("cam_a", [])
     if not cam_a:
         raise RuntimeError("Kein Kamera-A-Material.")
@@ -77,85 +106,69 @@ def build_timeline(project: str) -> dict:
         "V1": [], "V2": [], "V3": [], "A1": [], "A2": [], "A3": [],
     }
     warnungen: list[str] = []
-    ref_path = base / sync["referenz"]
 
-    def _event(clip: dict, timeline_start: float, dauer: float, src_in: float,
-               **extra) -> dict:
-        return {
-            "datei": str(base / clip["relpfad"]),
-            "name": clip["name"],
-            "timeline_start": round(timeline_start, 6),
-            "dauer": round(dauer, 6),
-            "src_in": round(src_in, 6),
-            "datei_dauer": float(clip["dauer"]),
-            "breite": clip.get("breite"),
-            "hoehe": clip.get("hoehe"),
-            **extra,
-        }
+    # Referenz-Audio-Info einmalig (steht i.d.R. schon in media_info.json)
+    ref_rel = sync["referenz"]
+    ref_path = base / ref_rel
+    ref_clip = lookup.get(ref_rel)
+    if ref_clip is None:
+        info = ffmpeg_utils.media_info(ref_path)
+        ref_clip = {**info, "relpfad": ref_rel, "name": ref_path.name}
 
     for seg in segs:
         t0 = seg["timeline_start"]
         for role, vtrack, atrack in (("cam_a", "V1", "A2"), ("cam_b", "V2", None)):
-            hit = sync_audio.clip_for_ref_time(project, media, sync, role, seg["start"])
-            if hit is None:
-                if role == "cam_a":
-                    warnungen.append(
-                        f"Kein {role}-Clip für Segment ab {seg['start']:.2f} s"
-                    )
-                continue
-            clip, src_t = hit
-            dauer = min(seg["dauer"], float(clip["dauer"]) - src_t)
-            if dauer < seg["dauer"] - 0.04:
+            pieces, uncovered = sync_audio.cover_range(
+                media, sync, role, seg["start"], seg["ende"]
+            )
+            if role == "cam_a" and not pieces:
                 warnungen.append(
-                    f"{role}-Clip {clip['name']} endet {seg['dauer'] - dauer:.2f} s "
-                    f"vor Segmentende (Segment ab {seg['start']:.2f} s)"
+                    f"Kein {role}-Clip für Segment ab {seg['start']:.2f} s"
                 )
-            ev = _event(clip, t0, dauer, src_t)
-            tracks[vtrack].append(ev)
-            if atrack and clip.get("audio_kanaele"):
-                tracks[atrack].append(dict(ev))
+            if uncovered > 0.04 and (role == "cam_a" or pieces):
+                warnungen.append(
+                    f"{role}: {uncovered:.2f} s des Segments ab "
+                    f"{seg['start']:.2f} s nicht abgedeckt"
+                )
+            for p in pieces:
+                ev = _event_from_clip(base, p["clip"], t0 + p["rel_start"],
+                                      p["dauer"], p["src_in"])
+                tracks[vtrack].append(ev)
+                if atrack and p["clip"].get("audio_kanaele"):
+                    tracks[atrack].append(dict(ev))
 
         # A1: Referenz-Audio – Referenzzeit == Dateizeit der Referenzdatei
-        ref_info = ffmpeg_utils.media_info(ref_path)
-        a_dauer = min(seg["dauer"], max(0.0, ref_info["dauer"] - seg["start"]))
+        a_dauer = min(seg["dauer"], max(0.0, float(ref_clip["dauer"]) - seg["start"]))
         if a_dauer > 0:
-            tracks["A1"].append({
-                "datei": str(ref_path),
-                "name": ref_path.name,
-                "timeline_start": round(t0, 6),
-                "dauer": round(a_dauer, 6),
-                "src_in": round(seg["start"], 6),
-                "datei_dauer": ref_info["dauer"],
-                "breite": None, "hoehe": None,
-            })
+            tracks["A1"].append(
+                _event_from_clip(base, ref_clip, t0, a_dauer, seg["start"])
+            )
+        if a_dauer < seg["dauer"] - 0.04:
+            warnungen.append(
+                f"Referenz-Audio endet {seg['dauer'] - a_dauer:.2f} s vor "
+                f"Segmentende (Segment ab {seg['start']:.2f} s)"
+            )
 
     reel_ende = segs[-1]["timeline_ende"]
 
     # V3: B-Roll
     matches = broll.load_matches(project)
     if matches:
-        broll_infos = {c["datei"]: c for c in (broll.load_broll_index(project)
-                                               or {"clips": []})["clips"]}
         for m in matches["matches"]:
-            info = broll_infos.get(m["broll_datei"])
-            clip_path = base / m["broll_datei"]
-            mi = ffmpeg_utils.media_info(clip_path) if info is None else None
-            w = info.get("breite") if info else (mi or {}).get("breite")
-            h = info.get("hoehe") if info else (mi or {}).get("hoehe")
-            file_dauer = float(info["dauer"] if info else mi["dauer"])
-            dauer = min(float(m["dauer"]), file_dauer - float(m["broll_einstieg"]))
-            if info and (w is None or h is None):
-                probe = ffmpeg_utils.media_info(clip_path)
-                w, h = probe.get("breite"), probe.get("hoehe")
-            tracks["V3"].append({
-                "datei": str(clip_path),
-                "name": Path(m["broll_datei"]).name,
-                "timeline_start": float(m["transkript_zeit"]),
-                "dauer": round(dauer, 6),
-                "src_in": float(m["broll_einstieg"]),
-                "datei_dauer": file_dauer,
-                "breite": w, "hoehe": h,
-            })
+            clip = lookup.get(m["broll_datei"])
+            if clip is None:
+                info = ffmpeg_utils.media_info(base / m["broll_datei"])
+                clip = {**info, "relpfad": m["broll_datei"],
+                        "name": Path(m["broll_datei"]).name}
+            dauer = min(float(m["dauer"]),
+                        float(clip["dauer"]) - float(m["broll_einstieg"]))
+            if dauer <= 0:
+                warnungen.append(f"B-Roll-Einstieg hinter Clipende: {m['broll_datei']}")
+                continue
+            tracks["V3"].append(
+                _event_from_clip(base, clip, float(m["transkript_zeit"]), dauer,
+                                 float(m["broll_einstieg"]))
+            )
 
     # A3: Musik
     if cfg["musik_aktiv"]:
@@ -171,7 +184,9 @@ def build_timeline(project: str) -> dict:
                     "dauer": round(min(reel_ende, minfo["dauer"]), 6),
                     "src_in": 0.0,
                     "datei_dauer": minfo["dauer"],
-                    "breite": None, "hoehe": None,
+                    "breite": None, "hoehe": None, "fps": None,
+                    "audio_kanaele": minfo.get("audio_kanaele"),
+                    "audio_samplerate": minfo.get("audio_samplerate"),
                     "gain_db": float(track.get("gain_db", MUSIK_GAIN_DB)),
                 })
             else:
@@ -248,20 +263,28 @@ def _levels_filter(gain_db: float) -> str:
 """
 
 
+def _file_rate(ev: dict, seq_timebase: int, seq_ntsc: bool) -> tuple[int, bool]:
+    """Native Framerate der Datei; Audiodateien laufen in der Sequenzrate."""
+    if ev.get("fps"):
+        return rate_for_fps(float(ev["fps"]))
+    return seq_timebase, seq_ntsc
+
+
 class _FileRegistry:
     """Jede Datei bekommt eine ID; der volle <file>-Block nur beim ersten Mal."""
 
-    def __init__(self, timebase: int, ntsc: bool, fps: float):
-        self.timebase, self.ntsc, self.fps = timebase, ntsc, fps
+    def __init__(self, timebase: int, ntsc: bool):
+        self.seq_timebase, self.seq_ntsc = timebase, ntsc
         self.ids: dict[str, str] = {}
 
-    def xml(self, ev: dict, mediatype: str) -> str:
+    def xml(self, ev: dict) -> str:
         path = ev["datei"]
         if path in self.ids:
             return f'\t\t\t\t\t\t<file id="{self.ids[path]}"/>\n'
         fid = f"file-{len(self.ids) + 1}"
         self.ids[path] = fid
-        dur = to_frames(float(ev["datei_dauer"]), self.fps)
+        f_tb, f_ntsc = _file_rate(ev, self.seq_timebase, self.seq_ntsc)
+        dur = to_frames(float(ev["datei_dauer"]), exact_fps(f_tb, f_ntsc))
         video_xml = ""
         if ev.get("breite"):
             video_xml = (
@@ -272,20 +295,24 @@ class _FileRegistry:
                 "\t\t\t\t\t\t\t\t\t</samplecharacteristics>\n"
                 "\t\t\t\t\t\t\t\t</video>\n"
             )
-        audio_xml = (
-            "\t\t\t\t\t\t\t\t<audio>\n"
-            "\t\t\t\t\t\t\t\t\t<samplecharacteristics>\n"
-            "\t\t\t\t\t\t\t\t\t\t<depth>16</depth>\n"
-            "\t\t\t\t\t\t\t\t\t\t<samplerate>48000</samplerate>\n"
-            "\t\t\t\t\t\t\t\t\t</samplecharacteristics>\n"
-            "\t\t\t\t\t\t\t\t\t<channelcount>2</channelcount>\n"
-            "\t\t\t\t\t\t\t\t</audio>\n"
-        )
+        audio_xml = ""
+        kanaele = ev.get("audio_kanaele")
+        if kanaele:
+            rate = ev.get("audio_samplerate") or 48000
+            audio_xml = (
+                "\t\t\t\t\t\t\t\t<audio>\n"
+                "\t\t\t\t\t\t\t\t\t<samplecharacteristics>\n"
+                "\t\t\t\t\t\t\t\t\t\t<depth>16</depth>\n"
+                f"\t\t\t\t\t\t\t\t\t\t<samplerate>{rate}</samplerate>\n"
+                "\t\t\t\t\t\t\t\t\t</samplecharacteristics>\n"
+                f"\t\t\t\t\t\t\t\t\t<channelcount>{kanaele}</channelcount>\n"
+                "\t\t\t\t\t\t\t\t</audio>\n"
+            )
         return (
             f'\t\t\t\t\t\t<file id="{fid}">\n'
             f"\t\t\t\t\t\t\t<name>{escape(ev['name'])}</name>\n"
             f"\t\t\t\t\t\t\t<pathurl>{escape(_pathurl(path))}</pathurl>\n"
-            + _rate_xml(self.timebase, self.ntsc, "\t\t\t\t\t\t\t")
+            + _rate_xml(f_tb, f_ntsc, "\t\t\t\t\t\t\t")
             + f"\t\t\t\t\t\t\t<duration>{dur}</duration>\n"
             "\t\t\t\t\t\t\t<media>\n"
             + video_xml + audio_xml +
@@ -294,15 +321,20 @@ class _FileRegistry:
         )
 
 
-def _clipitem(ev: dict, idx: int, files: _FileRegistry, fps: float,
+def _clipitem(ev: dict, idx: int, files: _FileRegistry, seq_fps: float,
               mediatype: str, seq_w: int, seq_h: int,
-              scale_video: bool) -> str:
-    start = to_frames(ev["timeline_start"], fps)
-    end = to_frames(ev["timeline_start"] + ev["dauer"], fps)
-    src_in = to_frames(ev["src_in"], fps)
-    src_out = src_in + (end - start)
+              trackindex: int = 1) -> str:
+    start = to_frames(ev["timeline_start"], seq_fps)
+    end = to_frames(ev["timeline_start"] + ev["dauer"], seq_fps)
+    # Quell-In/Out in der NATIVEN Framerate der Datei (Premiere conformt die
+    # Datei auf ihre echte Rate; Frames in der falschen Rate träfen die
+    # falsche Quellzeit, z.B. 50p-B-Roll in einer 25p-Sequenz).
+    f_tb, f_ntsc = _file_rate(ev, files.seq_timebase, files.seq_ntsc)
+    f_fps = exact_fps(f_tb, f_ntsc)
+    src_in = to_frames(ev["src_in"], f_fps)
+    src_out = src_in + to_frames(ev["dauer"], f_fps)
     filters = ""
-    if mediatype == "video" and scale_video and ev.get("breite") and ev.get("hoehe"):
+    if mediatype == "video" and ev.get("breite") and ev.get("hoehe"):
         pct = max(seq_w / float(ev["breite"]), seq_h / float(ev["hoehe"])) * 100.0
         if abs(pct - 100.0) > 0.01:
             filters += _scale_filter(pct)
@@ -313,20 +345,20 @@ def _clipitem(ev: dict, idx: int, files: _FileRegistry, fps: float,
         sourcetrack = (
             "\t\t\t\t\t\t<sourcetrack>\n"
             "\t\t\t\t\t\t\t<mediatype>audio</mediatype>\n"
-            "\t\t\t\t\t\t\t<trackindex>1</trackindex>\n"
+            f"\t\t\t\t\t\t\t<trackindex>{trackindex}</trackindex>\n"
             "\t\t\t\t\t\t</sourcetrack>\n"
         )
     return (
         f'\t\t\t\t\t<clipitem id="clipitem-{idx}">\n'
         f"\t\t\t\t\t\t<name>{escape(ev['name'])}</name>\n"
         "\t\t\t\t\t\t<enabled>TRUE</enabled>\n"
-        f"\t\t\t\t\t\t<duration>{end - start}</duration>\n"
-        + _rate_xml(files.timebase, files.ntsc, "\t\t\t\t\t\t")
+        f"\t\t\t\t\t\t<duration>{src_out - src_in}</duration>\n"
+        + _rate_xml(f_tb, f_ntsc, "\t\t\t\t\t\t")
         + f"\t\t\t\t\t\t<start>{start}</start>\n"
         f"\t\t\t\t\t\t<end>{end}</end>\n"
         f"\t\t\t\t\t\t<in>{src_in}</in>\n"
         f"\t\t\t\t\t\t<out>{src_out}</out>\n"
-        + files.xml(ev, mediatype)
+        + files.xml(ev)
         + sourcetrack + filters +
         "\t\t\t\t\t</clipitem>\n"
     )
@@ -337,34 +369,49 @@ def generate_fcpxml(project: str, progress=None) -> Path:
     fps = timeline["fps"]
     timebase, ntsc = timeline["timebase"], timeline["ntsc"]
     seq_w, seq_h = timeline["breite"], timeline["hoehe"]
-    cfg = config.load_config(project)
-    scale_video = cfg["export_format"] == "9:16"
 
-    files = _FileRegistry(timebase, ntsc, fps)
+    files = _FileRegistry(timebase, ntsc)
     idx = 0
 
-    def track_xml(events: list[dict], mediatype: str, enabled: bool = True,
-                  locked: bool = False) -> str:
+    def video_track(events: list[dict]) -> str:
         nonlocal idx
         items = ""
         for ev in sorted(events, key=lambda e: e["timeline_start"]):
             idx += 1
-            items += _clipitem(ev, idx, files, fps, mediatype, seq_w, seq_h,
-                               scale_video)
-        en = "TRUE" if enabled else "FALSE"
-        lo = "TRUE" if locked else "FALSE"
+            items += _clipitem(ev, idx, files, fps, "video", seq_w, seq_h)
         return (f"\t\t\t\t<track>\n{items}"
-                f"\t\t\t\t\t<enabled>{en}</enabled>\n"
-                f"\t\t\t\t\t<locked>{lo}</locked>\n"
-                f"\t\t\t\t</track>\n")
+                "\t\t\t\t\t<enabled>TRUE</enabled>\n"
+                "\t\t\t\t\t<locked>FALSE</locked>\n"
+                "\t\t\t\t</track>\n")
+
+    def audio_track_group(events: list[dict], enabled: bool = True) -> str:
+        """Stereo-Quellen brauchen zwei Spuren (trackindex 1/2), sonst
+        importiert Premiere nur den linken Kanal."""
+        nonlocal idx
+        channels = 1
+        for ev in events:
+            channels = max(channels, min(int(ev.get("audio_kanaele") or 1), 2))
+        out = ""
+        en = "TRUE" if enabled else "FALSE"
+        for ch in range(1, channels + 1):
+            items = ""
+            for ev in sorted(events, key=lambda e: e["timeline_start"]):
+                if int(ev.get("audio_kanaele") or 1) < ch:
+                    continue
+                idx += 1
+                items += _clipitem(ev, idx, files, fps, "audio", seq_w, seq_h,
+                                   trackindex=ch)
+            out += (f"\t\t\t\t<track>\n{items}"
+                    f"\t\t\t\t\t<enabled>{en}</enabled>\n"
+                    "\t\t\t\t\t<locked>FALSE</locked>\n"
+                    "\t\t\t\t</track>\n")
+        return out
 
     t = timeline["tracks"]
-    video_tracks = (track_xml(t["V1"], "video")
-                    + track_xml(t["V2"], "video")
-                    + track_xml(t["V3"], "video"))
-    audio_tracks = (track_xml(t["A1"], "audio")
-                    + track_xml(t["A2"], "audio", enabled=False)  # Backup stumm
-                    + track_xml(t["A3"], "audio"))
+    video_tracks = video_track(t["V1"]) + video_track(t["V2"]) + video_track(t["V3"])
+    audio_tracks = (audio_track_group(t["A1"])
+                    + audio_track_group(t["A2"], enabled=False)  # Backup stumm
+                    + audio_track_group(t["A3"]))
 
     duration = to_frames(timeline["dauer"], fps)
     ntsc_str = "TRUE" if ntsc else "FALSE"
