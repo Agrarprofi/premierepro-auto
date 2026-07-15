@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
@@ -13,6 +14,10 @@ from pydantic import BaseModel
 from .. import (broll, claude_client, config, cutting, ffmpeg_utils, ingest,
                 jobs, music, paths, pipeline, subtitles, sync_audio,
                 transcribe)
+
+# .env schon beim Serverstart laden, damit die API-Key-Anzeige im
+# Dashboard-Kopf stimmt (nicht erst beim ersten Claude-Aufruf).
+load_dotenv(paths.REPO_ROOT / ".env")
 
 STATIC_DIR = Path(__file__).parent / "static"
 
