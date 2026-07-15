@@ -3,12 +3,21 @@
 
 import sys
 
-import uvicorn
-
-from autoedit import ffmpeg_utils
+if sys.version_info < (3, 11):
+    sys.exit(
+        f"FEHLER: autoedit braucht Python 3.11+, gefunden: "
+        f"{sys.version.split()[0]}.\n"
+        "Auf macOS:  brew install python@3.12\n"
+        "Dann:       rm -rf .venv && python3.12 -m venv .venv && "
+        "source .venv/bin/activate && pip install -r requirements.txt"
+    )
 
 
 def main() -> None:
+    import uvicorn
+
+    from autoedit import ffmpeg_utils
+
     ok, msg = ffmpeg_utils.check_ffmpeg()
     if not ok:
         print(f"FEHLER: {msg}", file=sys.stderr)

@@ -1,4 +1,5 @@
 # autoedit – Auto-Edit-Pipeline für Premiere Pro (macOS / Apple Silicon)
+# Benötigt Python 3.11+ (auf macOS: brew install python@3.12)
 fastapi>=0.110
 uvicorn[standard]>=0.29
 numpy>=1.26
