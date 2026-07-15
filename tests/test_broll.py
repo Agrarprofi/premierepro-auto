@@ -57,3 +57,41 @@ def test_delete_match(projekt, fake_claude):
     assert result["matches"] == []
     with pytest.raises(KeyError):
         broll.delete_match(projekt, "gibtsnicht")
+
+
+def test_enforce_rules_target_count_60s_reel():
+    """60s-Reel, Ziel 15 Schnittbilder à 2 s mit 1 s Abstand -> genau 15."""
+    cands = [
+        {"id": str(i), "transkript_zeit": 3.5 + 3.0 * i, "broll_einstieg": 0.0,
+         "dauer": 2.0, "broll_datei": "x", "begruendung": ""}
+        for i in range(19)
+    ]
+    ok = broll._enforce_rules([dict(c) for c in cands], 2.0, 60.0,
+                              min_abstand=1.0, budget=15 * 2.0)
+    assert len(ok) == 15
+
+
+def test_match_broll_with_target_count(projekt):
+    """broll_ziel_anzahl ersetzt die 40%-Regel; physikalisch Unmögliches
+    wird auf das Machbare begrenzt."""
+    from autoedit import config
+    from tests.conftest import FakeClaude, prepared_project
+
+    # Reel ist ~9.9 s lang: bei 2 s Dauer + 0.5 s Abstand passen max. 2
+    # Einblendungen nach der Hook-Sperre -> Ziel 15 wird auf 2 begrenzt
+    config.save_config(projekt, {"broll_ziel_anzahl": 15,
+                                 "broll_min_abstand_sek": 0.5})
+    viele = [
+        {"transkript_zeit": 3.5 + 3.0 * i,
+         "broll_datei": "input/broll/broll_traktor.mp4",
+         "broll_einstieg": 0.5 * i, "begruendung": "passt"}
+        for i in range(10)
+    ]
+    fake = FakeClaude(broll_matches=viele)
+    prepared_project(projekt, fake, with_broll=False)
+    broll.analyze_broll(projekt, client=fake)
+    result = broll.match_broll(projekt, client=fake)
+    assert len(result["matches"]) == 2
+    # Wiederverwendung desselben Clips ist erlaubt
+    assert all(m["broll_datei"] == "input/broll/broll_traktor.mp4"
+               for m in result["matches"])

@@ -189,16 +189,37 @@ def get_transcript(name: str) -> dict:
 
 # ------------------------------------------------------------ Sync
 
+class SyncPreviewOptions(BaseModel):
+    rolle: str = "cam_a"
+
+
 @app.post("/api/projects/{name}/sync/preview")
-def sync_preview(name: str) -> dict:
+def sync_preview(name: str, body: SyncPreviewOptions | None = None) -> dict:
     _project_or_404(name)
+    rolle = (body or SyncPreviewOptions()).rolle
 
     def runner(progress):
-        progress(0.2, "Rendere Sync-Vorschau")
-        out = sync_audio.render_sync_preview(name)
+        progress(0.2, f"Rendere Sync-Vorschau ({rolle})")
+        out = sync_audio.render_sync_preview(name, rolle=rolle)
         return {"datei": out.name}
 
-    return _start_job(name, "sync_preview", runner)
+    return _start_job(name, f"sync_preview_{rolle}", runner)
+
+
+class OffsetUpdate(BaseModel):
+    relpfad: str
+    offset_sekunden: float
+
+
+@app.put("/api/projects/{name}/sync/offsets")
+def put_sync_offset(name: str, body: OffsetUpdate) -> dict:
+    """Manuelle Offset-Korrektur aus der Sync-Tabelle."""
+    _project_or_404(name)
+    try:
+        return sync_audio.set_manual_offset(name, body.relpfad,
+                                            body.offset_sekunden)
+    except (KeyError, RuntimeError) as exc:
+        raise _err(exc)
 
 
 # ------------------------------------------------------------ Schnitt

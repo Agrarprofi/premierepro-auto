@@ -13,6 +13,11 @@ from . import paths
 DEFAULT_CONFIG: dict[str, Any] = {
     "reel_laenge_sek": 60,
     "broll_dauer_sek": 2.0,
+    # 0 = automatisch (max. 40% Abdeckung); >0 = so viele Schnittbilder
+    # anpeilen (z.B. 15 bei einem 60s-Reel), Clips dürfen mehrfach vorkommen
+    "broll_ziel_anzahl": 0,
+    # Mindestabstand zwischen zwei B-Roll-Einblendungen
+    "broll_min_abstand_sek": 1.0,
     "sprache": "de",
     "musik_aktiv": False,
     "untertitel_aktiv": True,
@@ -60,6 +65,10 @@ def _validate(cfg: dict[str, Any]) -> None:
         raise ValueError("reel_laenge_sek muss zwischen 5 und 3600 liegen")
     if not (0.5 <= float(cfg["broll_dauer_sek"]) <= 30):
         raise ValueError("broll_dauer_sek muss zwischen 0.5 und 30 liegen")
+    if not (0 <= int(cfg["broll_ziel_anzahl"]) <= 100):
+        raise ValueError("broll_ziel_anzahl muss zwischen 0 und 100 liegen")
+    if not (0 <= float(cfg["broll_min_abstand_sek"]) <= 30):
+        raise ValueError("broll_min_abstand_sek muss zwischen 0 und 30 liegen")
     if cfg["export_format"] not in ("quelle", "9:16"):
         raise ValueError('export_format muss "quelle" oder "9:16" sein')
     for key in ("musik_aktiv", "untertitel_aktiv"):

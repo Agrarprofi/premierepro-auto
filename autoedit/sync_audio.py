@@ -29,6 +29,8 @@ FINE_PAD_SEC = 1.0
 # Zufallspeak. Gleiche Aufnahme über verschiedene Mikros liegt real >> 0.1,
 # nicht überlappendes Material erfahrungsgemäß < 0.05.
 MIN_KONFIDENZ = 0.10
+MIN_OVERLAP_SEC = 5.0    # Mindest-Überlappung für einen gültigen Grob-Lag
+DRIFT_MIN_CLIP_SEC = 150.0  # Uhren-Drift erst bei längeren Takes messen
 
 
 def _load_wav_mono(path: Path) -> np.ndarray:
@@ -64,16 +66,42 @@ def _parabolic(y: np.ndarray, i: int) -> float:
     return i + 0.5 * (y[i - 1] - y[i + 1]) / denom
 
 
+def _ncc_over_lags(env_ref: np.ndarray, env_clip: np.ndarray,
+                   min_overlap: int) -> tuple[np.ndarray, np.ndarray]:
+    """Normalisierte Kreuzkorrelation je Lag.
+
+    Die unnormierte Korrelation bevorzugt Lags mit großer Überlappung –
+    ein nur teilweise überlappender Clip landet dann auf einem Scheinpeak
+    in der Mitte. Hier wird jeder Lag durch die Energie der tatsächlich
+    überlappenden Fenster geteilt (per Kumulativsummen, O(n)).
+    """
+    corr = signal.correlate(env_ref, env_clip, mode="full", method="fft")
+    lags = np.arange(-(len(env_clip) - 1), len(env_ref))
+    cs_r = np.concatenate(([0.0], np.cumsum(env_ref.astype(np.float64) ** 2)))
+    cs_c = np.concatenate(([0.0], np.cumsum(env_clip.astype(np.float64) ** 2)))
+    r0 = np.clip(lags, 0, len(env_ref))
+    r1 = np.clip(lags + len(env_clip), 0, len(env_ref))
+    c0 = np.clip(-lags, 0, len(env_clip))
+    c1 = np.clip(len(env_ref) - lags, 0, len(env_clip))
+    energie = np.sqrt((cs_r[r1] - cs_r[r0]) * (cs_c[c1] - cs_c[c0]))
+    gueltig = ((r1 - r0) >= min_overlap) & (energie > 1e-9)
+    ncc = np.where(gueltig, corr / np.maximum(energie, 1e-9), -np.inf)
+    return ncc, lags
+
+
 def find_offset(ref: np.ndarray, clip: np.ndarray, sr: int = SYNC_SR) -> tuple[float, float]:
     """Offset (Sekunden) des Clips relativ zur Referenz + Konfidenz [0..1]."""
     if len(ref) < sr or len(clip) < sr:
         raise ValueError("Signale zu kurz für Sync (< 1 s)")
 
-    # --- Stufe 1: grob über Hüllkurven
+    # --- Stufe 1: grob über Hüllkurven (normalisiert, s. _ncc_over_lags)
     env_ref = _envelope(ref)
     env_clip = _envelope(clip)
-    corr = signal.correlate(env_ref, env_clip, mode="full", method="fft")
-    lag_env = int(np.argmax(corr)) - (len(env_clip) - 1)
+    min_overlap = min(int(MIN_OVERLAP_SEC * ENV_SR), len(env_clip), len(env_ref))
+    ncc, lags = _ncc_over_lags(env_ref, env_clip, min_overlap)
+    if not np.isfinite(ncc).any():
+        raise ValueError("Keine ausreichende Überlappung mit der Referenz")
+    lag_env = int(lags[int(np.argmax(ncc))])
     coarse = lag_env / ENV_SR  # ref_zeit = clip_zeit + coarse
 
     # --- Stufe 2: fein auf dem Rohsignal in einem Fenster um das Grobergebnis
@@ -112,6 +140,47 @@ def find_offset(ref: np.ndarray, clip: np.ndarray, sr: int = SYNC_SR) -> tuple[f
     denom = float(np.linalg.norm(ref_seg) * np.linalg.norm(chunk))
     konfidenz = float(fine[k] / denom) if denom > 0 else 0.0
     return float(offset), max(0.0, min(1.0, konfidenz))
+
+
+def measure_drift(ref: np.ndarray, clip: np.ndarray, offset: float,
+                  sr: int = SYNC_SR) -> float | None:
+    """Uhren-Drift: Offset-Differenz zwischen Clip-Ende und Clip-Anfang.
+
+    Kamera- und Rekorder-Uhren laufen leicht auseinander; bei langen Takes
+    stimmt ein einzelner globaler Offset dann nicht mehr über den ganzen
+    Clip. Rückgabe: Drift in Sekunden über die Cliplänge (None wenn nicht
+    messbar oder Clip zu kurz).
+    """
+    if len(clip) < DRIFT_MIN_CLIP_SEC * sr:
+        return None
+
+    def _local_offset(frac0: float, frac1: float) -> float | None:
+        a, b = int(frac0 * len(clip)), int(frac1 * len(clip))
+        seg = clip[a:b]
+        chunk_len = min(len(seg), int(15 * sr))
+        if chunk_len < 5 * sr:
+            return None
+        if len(seg) > chunk_len:
+            cs = np.cumsum(np.abs(seg))
+            sums = cs[chunk_len:] - cs[:-chunk_len]
+            c0 = a + int(np.argmax(sums))
+        else:
+            c0 = a
+        chunk = clip[c0:c0 + chunk_len]
+        pad = int(0.5 * sr)
+        r_exp = int(round(c0 + offset * sr))
+        w0, w1 = r_exp - pad, r_exp + chunk_len + pad
+        if w0 < 0 or w1 > len(ref):
+            return None
+        fine = signal.correlate(ref[w0:w1], chunk, mode="valid", method="fft")
+        k = int(np.argmax(fine))
+        return ((w0 + _parabolic(fine, k)) - c0) / sr
+
+    anfang = _local_offset(0.0, 0.25)
+    ende = _local_offset(0.75, 1.0)
+    if anfang is None or ende is None:
+        return None
+    return float(ende - anfang)
 
 
 def _ncc_at(ref: np.ndarray, clip: np.ndarray, offset: float, sr: int) -> float:
@@ -188,8 +257,18 @@ def compute_offsets(project: str, progress=None) -> dict:
                     f"Korrelation zu schwach (Konfidenz {konf:.3f}) – "
                     "vermutlich keine Überlappung mit der Referenz"
                 )
-            offsets[rel] = {"offset_sekunden": round(offset, 6),
-                            "konfidenz": round(konf, 3)}
+            entry = {"offset_sekunden": round(offset, 6),
+                     "konfidenz": round(konf, 3)}
+            drift = measure_drift(ref, clip, offset)
+            if drift is not None:
+                entry["drift_sekunden"] = round(drift, 4)
+                if abs(drift) > 0.04:
+                    entry["hinweis"] = (
+                        f"Achtung: Uhren-Drift {drift * 1000:+.0f} ms über den "
+                        "Clip – bei langen Takes Kamera-Wahl in Premiere "
+                        "segmentweise prüfen"
+                    )
+            offsets[rel] = entry
             seq_end[role] = offset + len(clip) / SYNC_SR
         except (ValueError, ffmpeg_utils.FfmpegError) as exc:
             # Kein gemeinsames Audio (z.B. Folge-Clip derselben Kamera ohne
@@ -222,6 +301,25 @@ def load_sync(project: str) -> dict | None:
     if not f.is_file():
         return None
     return json.loads(f.read_text(encoding="utf-8"))
+
+
+def set_manual_offset(project: str, relpfad: str, offset_sekunden: float) -> dict:
+    """Offset aus dem Dashboard von Hand korrigieren (überschreibt den
+    berechneten Wert in sync.json)."""
+    sync = load_sync(project)
+    if sync is None:
+        raise RuntimeError("Erst Sync ausführen.")
+    if relpfad not in sync["offsets"]:
+        raise KeyError(f"Unbekannte Datei: {relpfad}")
+    sync["offsets"][relpfad] = {
+        "offset_sekunden": round(float(offset_sekunden), 6),
+        "konfidenz": None,
+        "hinweis": "manuell gesetzt",
+    }
+    (paths.output_dir(project) / SYNC_FILE).write_text(
+        json.dumps(sync, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    return sync
 
 
 def offset_for(sync: dict, relpfad: str) -> float:
@@ -285,20 +383,24 @@ def cover_range(media: dict, sync: dict, role: str, ref_start: float,
     return pieces, max(0.0, uncovered)
 
 
-def render_sync_preview(project: str, dauer: float = 10.0) -> Path:
-    """10s-Vorschau: Bild von Kamera A + Referenz-Ton mit angewendetem Offset."""
+def render_sync_preview(project: str, dauer: float = 10.0,
+                        rolle: str = "cam_a") -> Path:
+    """10s-Vorschau: Kamerabild + Referenz-Ton mit angewendetem Offset –
+    zum Hören, ob der Sync passt (für Kamera A und Kamera B)."""
     media = ingest.load_media_info(project)
     sync = load_sync(project)
     if media is None or sync is None:
         raise RuntimeError("Erst Ingest und Sync ausführen.")
+    if rolle not in ("cam_a", "cam_b"):
+        raise ValueError(f"Ungültige Rolle für Sync-Vorschau: {rolle!r}")
 
     base = paths.project_dir(project)
     ref_path = base / sync["referenz"]
     ref_dauer = ffmpeg_utils.media_info(ref_path)["dauer"]
 
-    cams = ingest.clips_by_role(media).get("cam_a", [])
+    cams = ingest.clips_by_role(media).get(rolle, [])
     if not cams:
-        raise RuntimeError("Kein Kamera-A-Clip vorhanden.")
+        raise RuntimeError(f"Kein {rolle}-Clip vorhanden.")
 
     # Clip mit größter Überlappung zur Referenz wählen
     best, best_overlap = None, -1.0
@@ -311,7 +413,7 @@ def render_sync_preview(project: str, dauer: float = 10.0) -> Path:
         if overlap > best_overlap:
             best, best_overlap = (clip, off), overlap
     if best is None or best_overlap < dauer:
-        raise RuntimeError("Keine ausreichende Überlappung zwischen Kamera A "
+        raise RuntimeError(f"Keine ausreichende Überlappung zwischen {rolle} "
                            "und Referenz-Audio gefunden.")
 
     clip, off = best
@@ -319,7 +421,7 @@ def render_sync_preview(project: str, dauer: float = 10.0) -> Path:
     ref_start = ov_start + max(0.0, (best_overlap - dauer) / 2.0)
     clip_start = ref_start - off
 
-    out = paths.output_dir(project) / "preview_sync.mp4"
+    out = paths.output_dir(project) / f"preview_sync_{rolle}.mp4"
     ffmpeg_utils.run([
         "ffmpeg", "-y", "-v", "error",
         "-ss", f"{clip_start:.3f}", "-t", f"{dauer:.3f}", "-i", str(base / clip["relpfad"]),

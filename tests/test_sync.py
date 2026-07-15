@@ -166,3 +166,67 @@ def test_find_offset_overhang_falls_back_to_coarse(tmp_path):
     offset, konf = sync_audio.find_offset(ref, clip)
     assert abs(offset - true_offset) < 0.02  # Grob-Auflösung 10 ms
     assert konf > sync_audio.MIN_KONFIDENZ
+
+
+def test_find_offset_partial_overlap_majority_foreign(tmp_path):
+    """Nur 8 von 25 s des Clips überlappen die Referenz (Rest fremdes
+    Material): die normalisierte Grobsuche darf nicht auf einen
+    Scheinpeak in der Mitte springen."""
+    ref = make_reference(tmp_path / "ref.wav", seed=31)
+    true_offset = 22.0
+    tail = ref[int(true_offset * SR):]              # 8 s echte Überlappung
+    rng = np.random.default_rng(5)
+    fremd = rng.standard_normal(int(17 * SR)).astype(np.float32) * 0.3
+    clip = np.concatenate([tail, fremd])            # 25 s gesamt
+    offset, konf = sync_audio.find_offset(ref, clip)
+    assert abs(offset - true_offset) < 0.02
+    assert konf > sync_audio.MIN_KONFIDENZ
+
+
+def test_measure_drift_detects_clock_drift(tmp_path):
+    """Kamera-Uhr läuft 0.03% langsamer als die Referenz: Drift über
+    einen langen Take wird erkannt und gemeldet."""
+    from scipy import signal as sps
+    from tests.conftest import _run  # noqa: F401
+
+    rng = np.random.default_rng(11)
+    dur, sr = 200.0, SR
+    ref = rng.standard_normal(int(dur * sr)).astype(np.float32) * 0.05
+    for start in rng.uniform(0.0, dur - 0.5, size=400):
+        s = int(start * sr)
+        burst = rng.standard_normal(int(0.2 * sr)).astype(np.float32) * 0.5
+        ref[s:s + len(burst)] += burst
+
+    seg = ref[int(30 * sr):int(190 * sr)]           # 160 s Take ab t=30
+    faktor = 1.0003                                  # 0.03 % Drift
+    clip = sps.resample(seg, int(round(len(seg) * faktor))).astype(np.float32)
+
+    offset, _ = sync_audio.find_offset(ref, clip)
+    drift = sync_audio.measure_drift(ref, clip, offset)
+    assert drift is not None
+    # Gedehnter Clip = Kamera-Uhr langsamer -> Offset sinkt zum Clip-Ende,
+    # Drift ist negativ; erwartet ~0.75 * 160 s * 3e-4 ≈ 36 ms Betrag
+    assert -0.07 < drift < -0.015
+
+
+def test_set_manual_offset(projekt):
+    ingest.scan_project(projekt)
+    sync_audio.compute_offsets(projekt)
+    rel = "input/cam_b/cam_b_001.mp4"
+    result = sync_audio.set_manual_offset(projekt, rel, 5.25)
+    assert result["offsets"][rel]["offset_sekunden"] == 5.25
+    assert result["offsets"][rel]["hinweis"] == "manuell gesetzt"
+    gespeichert = sync_audio.load_sync(projekt)
+    assert gespeichert["offsets"][rel]["offset_sekunden"] == 5.25
+    with pytest.raises(KeyError):
+        sync_audio.set_manual_offset(projekt, "gibtsnicht.mp4", 1.0)
+
+
+def test_render_sync_preview_cam_b(projekt):
+    ingest.scan_project(projekt)
+    sync_audio.compute_offsets(projekt)
+    out = sync_audio.render_sync_preview(projekt, dauer=6.0, rolle="cam_b")
+    assert out.name == "preview_sync_cam_b.mp4"
+    assert out.is_file()
+    with pytest.raises(ValueError):
+        sync_audio.render_sync_preview(projekt, rolle="broll")

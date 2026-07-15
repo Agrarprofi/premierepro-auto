@@ -139,7 +139,27 @@ def match_broll(project: str, progress=None, client=None) -> dict:
         client = claude_client.ClaudeClient(model=cfg["claude_modell"], project=project)
 
     broll_dauer = float(cfg["broll_dauer_sek"])
+    min_abstand = float(cfg.get("broll_min_abstand_sek", MIN_ABSTAND_SEC))
+    ziel = int(cfg.get("broll_ziel_anzahl", 0))
     reel_dauer = segs[-1]["timeline_ende"]
+
+    # Ziel-Anzahl auf das physikalisch Mögliche begrenzen
+    max_moeglich = max(0, int((reel_dauer - HOOK_SPERRE_SEC)
+                              // (broll_dauer + min_abstand)))
+    if ziel > 0:
+        ziel = min(ziel, max_moeglich)
+        budget = ziel * broll_dauer
+        anzahl_regel = (
+            f"- finde GENAU {ziel} Stellen, gleichmäßig über das Reel "
+            "verteilt; Clips dürfen mehrfach verwendet werden (dann mit "
+            "unterschiedlichem 'broll_einstieg')\n"
+        )
+    else:
+        budget = reel_dauer * MAX_ABDECKUNG
+        anzahl_regel = (
+            f"- maximal {MAX_ABDECKUNG * 100:.0f} % des Reels "
+            f"({budget:.1f} s) mit B-Roll bedeckt\n"
+        )
 
     beschreibungen = "\n".join(
         f"- {c['datei']}: {c['beschreibung']} "
@@ -153,9 +173,9 @@ def match_broll(project: str, progress=None, client=None) -> dict:
         f"- nie über die ersten {HOOK_SPERRE_SEC:.0f} Sekunden des Reels "
         "(der Hook bleibt Talking Head)\n"
         f"- jede Einblendung dauert {broll_dauer:.1f} Sekunden\n"
-        f"- maximal {MAX_ABDECKUNG * 100:.0f} % des Reels "
-        f"({reel_dauer * MAX_ABDECKUNG:.1f} s) mit B-Roll bedeckt\n"
-        "- nie zwei B-Rolls direkt hintereinander\n"
+        + anzahl_regel +
+        f"- mindestens {min_abstand:.1f} Sekunden Abstand zwischen zwei "
+        "Einblendungen (nie zwei B-Rolls direkt hintereinander)\n"
         "- 'transkript_zeit' ist der Startzeitpunkt der Einblendung auf der "
         "Reel-Zeitachse in Sekunden\n\n"
         f"Reel-Transkript (Reel-Zeitachse, Gesamtlänge {reel_dauer:.1f} s):\n"
@@ -194,8 +214,14 @@ def match_broll(project: str, progress=None, client=None) -> dict:
             "thumbnail": clip.get("thumbnail"),
         })
 
-    matches = _enforce_rules(candidates, broll_dauer, reel_dauer)
+    matches = _enforce_rules(candidates, broll_dauer, reel_dauer,
+                             min_abstand=min_abstand, budget=budget)
     result = {"projekt": project, "matches": matches}
+    if ziel > 0 and len(matches) < ziel:
+        result["hinweis"] = (
+            f"Ziel waren {ziel} Schnittbilder, nach den Regeln blieben "
+            f"{len(matches)} übrig."
+        )
     save_matches(project, result)
     if progress:
         progress(1.0, f"{len(matches)} B-Roll-Zuordnungen")
@@ -203,19 +229,21 @@ def match_broll(project: str, progress=None, client=None) -> dict:
 
 
 def _enforce_rules(candidates: list[dict], broll_dauer: float,
-                   reel_dauer: float) -> list[dict]:
+                   reel_dauer: float, min_abstand: float = MIN_ABSTAND_SEC,
+                   budget: float | None = None) -> list[dict]:
     """Regeln hart durchsetzen, egal was Claude liefert."""
     ok: list[dict] = []
-    budget = reel_dauer * MAX_ABDECKUNG
+    if budget is None:
+        budget = reel_dauer * MAX_ABDECKUNG
     for cand in sorted(candidates, key=lambda c: c["transkript_zeit"]):
         t = cand["transkript_zeit"]
         if t < HOOK_SPERRE_SEC:
             continue
         if t + broll_dauer > reel_dauer:
             continue
-        if ok and t < ok[-1]["transkript_zeit"] + broll_dauer + MIN_ABSTAND_SEC:
+        if ok and t < ok[-1]["transkript_zeit"] + broll_dauer + min_abstand:
             continue
-        if (len(ok) + 1) * broll_dauer > budget:
+        if (len(ok) + 1) * broll_dauer > budget + 1e-6:
             break
         ok.append(cand)
     return ok

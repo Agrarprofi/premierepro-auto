@@ -128,8 +128,23 @@ function renderSync() {
   for (const [datei, o] of Object.entries(overview.sync.offsets)) {
     const tr = document.createElement("tr");
     const konf = o.konfidenz == null ? "–" : o.konfidenz.toFixed(2);
-    tr.innerHTML = `<td>${datei}</td><td>${o.offset_sekunden.toFixed(3)}</td>
-      <td>${konf}</td><td class="muted">${o.hinweis || ""}</td>`;
+    const drift = o.drift_sekunden != null
+      ? ` · Drift ${(o.drift_sekunden * 1000).toFixed(0)} ms` : "";
+    tr.innerHTML = `<td>${datei}</td>
+      <td><input type="number" step="0.001" style="width:8em"
+           value="${o.offset_sekunden.toFixed(3)}"></td>
+      <td>${konf}</td><td class="muted">${o.hinweis || ""}${drift}</td>`;
+    const input = $("input", tr);
+    input.onchange = async () => {
+      try {
+        await api(`/api/projects/${currentProject}/sync/offsets`, {
+          method: "PUT",
+          body: JSON.stringify({ relpfad: datei,
+                                 offset_sekunden: Number(input.value) }),
+        });
+        refreshOverview();
+      } catch (e) { alert(e.message); }
+    };
     tbody.appendChild(tr);
   }
 }
@@ -346,6 +361,8 @@ function bindProjectEvents() {
     const updates = {
       reel_laenge_sek: Number(form.elements.reel_laenge_sek.value),
       broll_dauer_sek: Number(form.elements.broll_dauer_sek.value),
+      broll_ziel_anzahl: Number(form.elements.broll_ziel_anzahl.value),
+      broll_min_abstand_sek: Number(form.elements.broll_min_abstand_sek.value),
       sprache: form.elements.sprache.value,
       export_format: form.elements.export_format.value,
       musik_aktiv: form.elements.musik_aktiv.checked,
@@ -388,12 +405,14 @@ function bindProjectEvents() {
   };
 
   $("#btn-sync").onclick = () => runStep("sync");
-  $("#btn-sync-preview").onclick = () =>
-    startJob(`/api/projects/${currentProject}/sync/preview`, null, () => {
+  const syncPreview = rolle => () =>
+    startJob(`/api/projects/${currentProject}/sync/preview`, { rolle }, () => {
       const v = $("#sync-video");
-      v.src = `/api/projects/${currentProject}/files/preview_sync.mp4?t=${Date.now()}`;
+      v.src = `/api/projects/${currentProject}/files/preview_sync_${rolle}.mp4?t=${Date.now()}`;
       v.classList.remove("hidden");
     });
+  $("#btn-sync-preview-a").onclick = syncPreview("cam_a");
+  $("#btn-sync-preview-b").onclick = syncPreview("cam_b");
 
   $("#cut-mode").onchange = e =>
     $("#cut-script").classList.toggle("hidden", e.target.value !== "skript");
