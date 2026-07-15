@@ -84,3 +84,55 @@ def test_record_usage_accumulates(projekt):
     # 1000 in + 500 out: 1000/1e6*3 + 500/1e6*15 = 0.003 + 0.0075
     assert costs["aufrufe"][0]["kosten_usd"] == 0.0105
     assert costs["summe_usd"] > 0.01
+
+
+def _kaputter_transcriber(*args, **kwargs):
+    raise AssertionError("Transkription darf beim Fortsetzen nicht erneut laufen")
+
+
+def test_run_all_resumes_after_failure(projekt, music_lib):
+    """'Alles ausführen' merkt sich den Letztstand: fertige Schritte werden
+    übersprungen, die Kette setzt beim ersten offenen Schritt fort."""
+    config.save_config(projekt, {"musik_aktiv": True})
+    fake = FakeClaude()
+    pipeline.run_all(projekt, client=fake, transcriber=fake_transcriber)
+
+    # Simulierter Abbruch beim B-Roll-Schritt (wie der ffmpeg-Fehler):
+    # B-Roll + alles danach zurücksetzen
+    for step in ("broll", "untertitel", "musik", "export"):
+        pipeline._set_status(projekt, step, "fehler", "simulierter Abbruch")
+
+    fake2 = FakeClaude()
+    results = pipeline.run_all(projekt, client=fake2,
+                               transcriber=_kaputter_transcriber)
+
+    # Fertige Schritte übersprungen, offene neu gelaufen
+    for step in ("ingest", "transkript", "sync", "schnitt"):
+        assert "bereits erledigt" in results[step], results
+    assert "Zuordnungen" in results["broll"]
+    assert results["export"].startswith("testprojekt_premiere.xml")
+    # Claude wurde nur für die nachgeholten Schritte gebraucht
+    assert "reel_auswahl" not in fake2.calls
+    assert "broll_matching" in fake2.calls
+
+    status = pipeline.load_status(projekt)
+    assert all(status[s]["status"] == "ok" for s in pipeline.STEPS)
+
+
+def test_run_all_resume_with_everything_done(projekt, music_lib):
+    config.save_config(projekt, {"musik_aktiv": True})
+    fake = FakeClaude()
+    pipeline.run_all(projekt, client=fake, transcriber=fake_transcriber)
+    results = pipeline.run_all(projekt, client=FakeClaude(),
+                               transcriber=_kaputter_transcriber)
+    assert all("bereits erledigt" in r for r in results.values())
+
+
+def test_run_all_force_recomputes(projekt, music_lib):
+    config.save_config(projekt, {"musik_aktiv": True})
+    pipeline.run_all(projekt, client=FakeClaude(), transcriber=fake_transcriber)
+    fake2 = FakeClaude()
+    results = pipeline.run_all(projekt, fortsetzen=False, client=fake2,
+                               transcriber=fake_transcriber)
+    assert not any("bereits erledigt" in r for r in results.values())
+    assert "reel_auswahl" in fake2.calls

@@ -167,11 +167,29 @@ def run_step(project: str, step: str, progress=None, **kwargs) -> str:
     return detail
 
 
-def run_all(project: str, progress=None, **kwargs) -> dict:
-    """Komplette Kette; am Ende liegen FCPXML + SRT in output/."""
+def run_all(project: str, progress=None, fortsetzen: bool = True,
+            **kwargs) -> dict:
+    """Komplette Kette; am Ende liegen FCPXML + SRT in output/.
+
+    fortsetzen=True (Default): Schritte, die bereits auf 'ok' stehen, werden
+    übersprungen – die Kette setzt beim ersten offenen oder fehlgeschlagenen
+    Schritt fort. fortsetzen=False rechnet alles neu.
+    """
+    status = load_status(project)
+    skip = {s for s in STEPS if fortsetzen and status[s]["status"] == "ok"}
+    if len(skip) == len(STEPS):
+        if progress:
+            progress(1.0, "Alle Schritte bereits erledigt – für einen "
+                          "kompletten Neustart 'Alles neu berechnen' wählen")
+        return {s: "übersprungen (bereits erledigt)" for s in STEPS}
+
     results = {}
     n = len(STEPS)
     for i, step in enumerate(STEPS):
+        if step in skip:
+            results[step] = "übersprungen (bereits erledigt)"
+            log(project, f"Schritt '{step}' übersprungen (bereits erledigt)")
+            continue
         def sub_progress(frac: float, meldung: str = "", _i=i, _step=step):
             if progress:
                 progress((_i + frac) / n,

@@ -141,6 +141,7 @@ def get_job(job_id: str) -> dict:
 class StepOptions(BaseModel):
     modus: str = "auto"          # Schnitt: "auto" | "skript"
     skript: str | None = None
+    fortsetzen: bool = True      # run_all: fertige Schritte überspringen
 
 
 @app.post("/api/projects/{name}/steps/{step}")
@@ -164,6 +165,7 @@ def run_all(name: str, body: StepOptions | None = None) -> dict:
 
     def runner(progress):
         return pipeline.run_all(name, progress=progress,
+                                fortsetzen=opts.fortsetzen,
                                 modus=opts.modus, skript=opts.skript)
 
     return _start_job(name, "run_all", runner)

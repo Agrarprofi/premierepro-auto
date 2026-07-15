@@ -330,7 +330,16 @@ function cutBody() {
 
 function bindProjectEvents() {
   $("#btn-run-all").onclick = () =>
-    startJob(`/api/projects/${currentProject}/run_all`, cutBody());
+    startJob(`/api/projects/${currentProject}/run_all`,
+      { ...cutBody(), fortsetzen: true });
+
+  $("#btn-run-fresh").onclick = () => {
+    if (!confirm("Wirklich alle Schritte neu berechnen? " +
+                 "(inkl. Transkription – das kann dauern und kostet API-Aufrufe)"))
+      return;
+    startJob(`/api/projects/${currentProject}/run_all`,
+      { ...cutBody(), fortsetzen: false });
+  };
 
   $("#btn-save-config").onclick = async () => {
     const form = $("#config-form");

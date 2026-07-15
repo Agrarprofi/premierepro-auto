@@ -36,7 +36,10 @@
     <h3>Status-Kette</h3>
     <div id="status-chain" class="chain"></div>
     <div class="row">
-      <button id="btn-run-all" class="primary">▶ Alles ausführen</button>
+      <button id="btn-run-all" class="primary"
+        title="Überspringt bereits erledigte Schritte (grün) und setzt beim ersten offenen fort">▶ Alles ausführen</button>
+      <button id="btn-run-fresh"
+        title="Ignoriert den Letztstand und rechnet alle Schritte neu">⟳ Alles neu berechnen</button>
       <div id="job-status" class="job"></div>
     </div>
   </section>
