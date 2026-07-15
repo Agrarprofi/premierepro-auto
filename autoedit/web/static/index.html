@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>autoedit – Auto-Edit-Pipeline</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>autoedit</h1>
+  <span id="health" class="muted"></span>
+</header>
+
+<div class="layout">
+  <aside>
+    <h2>Projekte</h2>
+    <ul id="project-list"></ul>
+    <div class="row">
+      <input id="new-project-name" placeholder="neues-projekt">
+      <button id="btn-new-project">+ Anlegen</button>
+    </div>
+  </aside>
+
+  <main id="main">
+    <p class="muted">Projekt links auswählen oder neu anlegen.<br>
+    Rohmaterial in <code>projects/&lt;name&gt;/input/…</code> legen
+    (cam_a, cam_b, audio_dji, broll).</p>
+  </main>
+</div>
+
+<template id="tpl-project">
+  <h2 id="project-title"></h2>
+
+  <section>
+    <h3>Status-Kette</h3>
+    <div id="status-chain" class="chain"></div>
+    <div class="row">
+      <button id="btn-run-all" class="primary">▶ Alles ausführen</button>
+      <div id="job-status" class="job"></div>
+    </div>
+  </section>
+
+  <section>
+    <h3>Konfiguration</h3>
+    <form id="config-form" class="grid">
+      <label>Reel-Länge (s) <input type="number" name="reel_laenge_sek" min="5" max="3600"></label>
+      <label>B-Roll-Dauer (s) <input type="number" step="0.1" name="broll_dauer_sek" min="0.5" max="30"></label>
+      <label>Sprache <input name="sprache"></label>
+      <label>Export-Format
+        <select name="export_format">
+          <option value="quelle">Quellauflösung</option>
+          <option value="9:16">9:16 (1080×1920)</option>
+        </select>
+      </label>
+      <label class="check"><input type="checkbox" name="musik_aktiv"> Musik</label>
+      <label class="check"><input type="checkbox" name="untertitel_aktiv"> Untertitel</label>
+      <label>Claude-Modell <input name="claude_modell"></label>
+    </form>
+    <div class="row">
+      <button id="btn-save-config">Speichern</button>
+      <select id="preset-select"><option value="">Preset wählen…</option></select>
+      <button id="btn-apply-preset">Preset anwenden</button>
+      <input id="preset-name" placeholder="Preset-Name">
+      <button id="btn-save-preset">Als Preset speichern</button>
+    </div>
+  </section>
+
+  <section>
+    <h3>Dateien</h3>
+    <div id="files" class="files"></div>
+  </section>
+
+  <section>
+    <h3>Transkript</h3>
+    <div class="row">
+      <button id="btn-transcribe">Transkription starten</button>
+      <button id="btn-show-transcript">Vorschau anzeigen</button>
+    </div>
+    <pre id="transcript-preview" class="scroll hidden"></pre>
+  </section>
+
+  <section>
+    <h3>Synchronisation</h3>
+    <div class="row">
+      <button id="btn-sync">Sync berechnen</button>
+      <button id="btn-sync-preview">Sync prüfen (10s-Clip)</button>
+    </div>
+    <table id="sync-table" class="hidden">
+      <thead><tr><th>Datei</th><th>Offset (s)</th><th>Konfidenz</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <video id="sync-video" class="hidden" controls></video>
+  </section>
+
+  <section>
+    <h3>Schnitt (Reel-Auswahl)</h3>
+    <div class="row">
+      <select id="cut-mode">
+        <option value="auto">Automatisch (Hook/Kern/Abschluss)</option>
+        <option value="skript">Nach eigenem Skript/Stichworten</option>
+      </select>
+      <button id="btn-cut">Segmente wählen lassen</button>
+      <button id="btn-cut-preview">Vorschau rendern (720p)</button>
+    </div>
+    <textarea id="cut-script" class="hidden" rows="4"
+      placeholder="Eigenes Skript oder Stichworte …"></textarea>
+    <div id="segments"></div>
+    <p id="segments-total" class="muted"></p>
+    <video id="cut-video" class="hidden" controls></video>
+  </section>
+
+  <section>
+    <h3>B-Roll</h3>
+    <div class="row">
+      <button id="btn-broll">Analysieren + Zuordnen</button>
+    </div>
+    <div id="broll-matches"></div>
+  </section>
+
+  <section>
+    <h3>Untertitel</h3>
+    <div class="row">
+      <button id="btn-subtitles">SRT erzeugen + korrigieren</button>
+      <a id="link-srt" class="hidden" download>reel.srt</a>
+      <a id="link-srt-korr" class="hidden" download>reel_korrigiert.srt</a>
+    </div>
+    <div id="subtitle-diff"></div>
+  </section>
+
+  <section>
+    <h3>Musik</h3>
+    <div class="row">
+      <button id="btn-music">Track von Claude wählen lassen</button>
+      <select id="music-select"><option value="">– manuell wählen –</option></select>
+      <span id="music-current" class="muted"></span>
+    </div>
+  </section>
+
+  <section>
+    <h3>Export</h3>
+    <div class="row">
+      <button id="btn-export" class="primary">FCPXML erzeugen</button>
+      <a id="link-xml" class="hidden" download>Premiere-XML herunterladen</a>
+    </div>
+    <p class="muted">In Premiere: Datei &gt; Importieren &gt; die XML wählen.
+    SRT separat importieren (siehe README_UNTERTITEL.txt im Output-Ordner).</p>
+  </section>
+
+  <section>
+    <h3>Kosten</h3>
+    <div id="costs" class="muted"></div>
+  </section>
+
+  <section>
+    <h3>Log</h3>
+    <button id="btn-log">Aktualisieren</button>
+    <pre id="log" class="scroll"></pre>
+  </section>
+</template>
+
+<script src="app.js"></script>
+</body>
+</html>
