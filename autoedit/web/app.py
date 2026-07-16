@@ -390,5 +390,15 @@ def get_output_file(name: str, relpath: str):
     return FileResponse(target)
 
 
+@app.middleware("http")
+async def _no_stale_frontend(request, call_next):
+    """Browser zwingen, HTML/JS/CSS nach Updates neu zu validieren –
+    sonst zeigt das Dashboard nach einem git pull die alte Oberfläche."""
+    response = await call_next(request)
+    if not request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 # Statisches Frontend (muss nach den API-Routen gemountet werden)
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
