@@ -26,7 +26,7 @@ def test_generate_fcpxml_frame_accuracy(projekt, fake_claude):
     assert out.name == "testprojekt_premiere.xml"
 
     tree = ET.parse(out)
-    seq = tree.getroot().find("sequence")
+    seq = tree.getroot().find(".//sequence")
     assert seq.find("rate/timebase").text == "25"
     assert seq.find("rate/ntsc").text == "FALSE"
     fmt = seq.find("media/video/format/samplecharacteristics")
@@ -84,7 +84,7 @@ def test_fcpxml_9_16_scaling(projekt, fake_claude):
     config.save_config(projekt, {"export_format": "9:16"})
     out = fcpxml.generate_fcpxml(projekt)
     tree = ET.parse(out)
-    seq = tree.getroot().find("sequence")
+    seq = tree.getroot().find(".//sequence")
     fmt = seq.find("media/video/format/samplecharacteristics")
     assert fmt.find("width").text == "1080"
     assert fmt.find("height").text == "1920"
@@ -102,7 +102,7 @@ def test_fcpxml_music_track_with_level(projekt, fake_claude, music_lib):
     music.set_track(projekt, "ruhig_akustik.wav")
     out = fcpxml.generate_fcpxml(projekt)
     tree = ET.parse(out)
-    atracks = tree.getroot().findall("sequence/media/audio/track")
+    atracks = tree.getroot().findall(".//sequence/media/audio/track")
     a3 = _clipitems(atracks[2])
     assert len(a3) == 1
     assert int(a3[0].find("start").text) == 0
@@ -139,7 +139,7 @@ def test_fcpxml_stereo_audio_becomes_track_pair(projekt, fake_claude, media):
     prepared_project(projekt, fake_claude, with_broll=False)
     out = fcpxml.generate_fcpxml(projekt)
     tree = ET.parse(out)
-    atracks = tree.getroot().findall("sequence/media/audio/track")
+    atracks = tree.getroot().findall(".//sequence/media/audio/track")
     # A1-Gruppe = 2 Spuren (stereo), A2 = 1 (Kamera mono), A3 = 1 (leer)
     assert len(atracks) == 4
 
@@ -196,7 +196,7 @@ def test_fcpxml_mixed_framerate_and_resolution_broll(projekt, fake_claude, media
 
     out = fcpxml.generate_fcpxml(projekt)
     tree = ET.parse(out)
-    v3 = tree.getroot().findall("sequence/media/video/track")[2]
+    v3 = tree.getroot().findall(".//sequence/media/video/track")[2]
     item = v3.find("clipitem")
     assert item is not None
     # Timeline-Frames in Sequenzrate (25), Quell-Frames in Dateirate (50)
@@ -209,9 +209,13 @@ def test_fcpxml_mixed_framerate_and_resolution_broll(projekt, fake_claude, media
     params = {p.find("parameterid").text: p.find("value").text
               for p in item.iter("parameter")}
     assert float(params["scale"]) == pytest.approx(200.0, abs=0.1)
-    # Datei-Block traegt die native Rate
-    fileblock = item.find("file")
-    assert fileblock.find("rate/timebase").text == "50"
+    # Datei-Block traegt die native Rate (volle Definition liegt im
+    # Masterclip, der Sequenz-Clip referenziert sie nur per id)
+    fid = item.find("file").get("id")
+    volle = [f for f in tree.getroot().iter("file")
+             if f.get("id") == fid and f.find("rate") is not None]
+    assert len(volle) == 1
+    assert volle[0].find("rate/timebase").text == "50"
 
 
 def test_av_versatz_compensation(env, media, tmp_path):
@@ -356,3 +360,42 @@ def test_timeline_uses_cfr_copy(projekt, fake_claude):
     # und die XML referenziert die Kopie
     out = fcpxml.generate_fcpxml(projekt)
     assert "output/cfr/cam_b/cam_b_001.mp4" in out.read_text(encoding="utf-8")
+
+
+def test_fcpxml_bin_structure_and_masterclips(projekt, fake_claude):
+    """Der Import landet in einer eigenen Ablage: Projekt > Bin
+    '<projekt> – autoedit' > (Bin 'Material' mit einem Masterclip pro
+    Datei + Sequenz); alle Sequenz-Clips verweisen auf die Masterclips."""
+    prepared_project(projekt, fake_claude)
+    out = fcpxml.generate_fcpxml(projekt)
+    tree = ET.parse(out)
+    root = tree.getroot()
+
+    proj = root.find("project")
+    assert proj is not None
+    bins = proj.findall(".//bin")
+    names = [b.findtext("name") for b in bins]
+    assert f"{projekt} – autoedit" in names
+    assert "Material" in names
+
+    # ein Masterclip pro Mediendatei, mit ismasterclip
+    clips = proj.findall(".//bin//clip")
+    clip_namen = {c.findtext("name") for c in clips}
+    assert {"cam_a_001.mov", "cam_b_001.mp4", "dji.wav",
+            "broll_traktor.mp4"} <= clip_namen
+    for c in clips:
+        assert c.findtext("ismasterclip") == "TRUE"
+        assert c.findtext("masterclipid") == c.get("id")
+
+    # Sequenz liegt in derselben Ablage; jeder Sequenz-Clip verweist auf
+    # einen Masterclip
+    seq = proj.find(".//bin/children/sequence")
+    assert seq is not None
+    master_ids = {c.get("id") for c in clips}
+    for ci in seq.iter("clipitem"):
+        assert ci.findtext("masterclipid") in master_ids
+
+    # volle <file>-Definition (mit pathurl) existiert genau einmal je Datei
+    volle = [f for f in root.iter("file") if f.find("pathurl") is not None]
+    urls = [f.findtext("pathurl") for f in volle]
+    assert len(urls) == len(set(urls))

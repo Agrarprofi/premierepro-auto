@@ -1,6 +1,6 @@
 import pytest
 
-from autoedit import broll, paths
+from autoedit import broll, ingest, paths
 from tests.conftest import prepared_project
 
 
@@ -111,3 +111,40 @@ def test_match_prompt_word_level_timeline(projekt, fake_claude):
     # Schnitt-Stand wird gespeichert
     data = broll.load_matches(projekt)
     assert data["reel_stand"]
+
+
+def test_analyze_broll_cached_per_file(projekt, fake_claude):
+    """Vision-Analyse läuft pro Datei nur einmal: unveränderte Dateien
+    kommen aus dem Index-Cache, geänderte werden neu analysiert."""
+    import os
+    import time as _time
+
+    from tests.conftest import FakeClaude
+
+    ingest.scan_project(projekt)
+    broll.analyze_broll(projekt, client=fake_claude)
+    assert fake_claude.calls.count("broll_analyse") == 2
+
+    # Zweiter Lauf, nichts geändert: keine Vision-Aufrufe, Index vollständig.
+    # client=None beweist: es wird nicht mal ein Claude-Client gebraucht.
+    result = broll.analyze_broll(projekt)
+    assert len(result["clips"]) == 2
+    assert all(e.get("fingerprint") for e in result["clips"])
+
+    # Eine Datei "ändern" (mtime) -> nur diese wird neu analysiert
+    f = paths.input_dir(projekt, "broll") / "broll_feld.mp4"
+    zukunft = _time.time() + 30
+    os.utime(f, (zukunft, zukunft))
+    fake2 = FakeClaude()
+    broll.analyze_broll(projekt, client=fake2)
+    assert fake2.calls.count("broll_analyse") == 1
+
+    # force=True analysiert alles neu
+    fake3 = FakeClaude()
+    broll.analyze_broll(projekt, client=fake3, force=True)
+    assert fake3.calls.count("broll_analyse") == 2
+
+    # Gelöschte Dateien fliegen aus dem Index
+    f.unlink()
+    result = broll.analyze_broll(projekt)
+    assert [e["name"] for e in result["clips"]] == ["broll_traktor.mp4"]

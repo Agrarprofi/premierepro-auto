@@ -244,7 +244,9 @@ def estimate_costs(project: str) -> dict:
     transcript = transcribe.load_transcript(project)
     n_words = len(transcript["woerter"]) if transcript else 3000
     broll_clips = len(ingest.clips_for_role(project, "broll"))
-    frames = broll_clips * broll.MAX_FRAMES_PER_CLIP
+    # Vision-Kosten fallen nur für noch nicht analysierte Dateien an
+    broll_neu = len(broll.clips_to_analyze(project))
+    frames = broll_neu * broll.MAX_FRAMES_PER_CLIP
 
     posten = []
 
@@ -257,10 +259,11 @@ def estimate_costs(project: str) -> dict:
 
     add("Aussagen-Analyse", int(n_words * 2.0) + 500, 2500)
     add("Reel-Auswahl", int(n_words * 2.0) + 1500, 1200)
-    if broll_clips:
+    if broll_neu:
         # ~1100 Tokens pro 768px-Frame plus Prompt/Antwort je Clip
-        add("B-Roll-Analyse (Vision)", frames * 1100 + broll_clips * 300,
-            broll_clips * 200)
+        add("B-Roll-Analyse (Vision)", frames * 1100 + broll_neu * 300,
+            broll_neu * 200)
+    if broll_clips:
         add("B-Roll-Matching", int(n_words * 0.6) + broll_clips * 80 + 600, 500)
     if cfg["untertitel_aktiv"]:
         add("Untertitel-Korrektur", 2500, 2500)

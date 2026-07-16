@@ -30,7 +30,7 @@ def test_run_all_end_to_end(projekt, music_lib):
 
     # XML enthält alle 6 Spuren und mind. je 1 Clipitem auf V1/A1/A3
     tree = ET.parse(out / "testprojekt_premiere.xml")
-    seq = tree.getroot().find("sequence")
+    seq = tree.getroot().find(".//sequence")
     assert len(seq.findall("media/video/track")) == 3
     atracks = seq.findall("media/audio/track")
     assert len(atracks) == 3

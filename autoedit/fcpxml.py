@@ -334,6 +334,10 @@ class _FileRegistry:
     def __init__(self, timebase: int, ntsc: bool):
         self.seq_timebase, self.seq_ntsc = timebase, ntsc
         self.ids: dict[str, str] = {}
+        self.master_ids: dict[str, str] = {}
+
+    def masterclip_id(self, path: str) -> str | None:
+        return self.master_ids.get(path)
 
     def xml(self, ev: dict) -> str:
         path = ev["datei"]
@@ -379,6 +383,61 @@ class _FileRegistry:
         )
 
 
+def _masterclip(ev: dict, mid: str, files: _FileRegistry) -> str:
+    """Masterclip (Projektfenster-Eintrag) für eine Mediendatei.
+
+    Alle Sequenz-Clips derselben Datei verweisen per <masterclipid> hierauf;
+    Premiere legt dadurch pro Datei genau EINEN Clip in der Ablage an,
+    statt die Importe lose im Projektfenster zu verstreuen.
+    """
+    f_tb, f_ntsc = _file_rate(ev, files.seq_timebase, files.seq_ntsc)
+    dur = to_frames(float(ev["datei_dauer"]), exact_fps(f_tb, f_ntsc))
+    name = escape(ev["name"])
+    media = ""
+    if ev.get("breite"):
+        media += (
+            "\t\t\t\t\t\t\t<video>\n"
+            "\t\t\t\t\t\t\t\t<track>\n"
+            f'\t\t\t\t\t\t\t\t\t<clipitem id="{mid}-v1">\n'
+            f"\t\t\t\t\t\t\t\t\t\t<name>{name}</name>\n"
+            f"\t\t\t\t\t\t\t\t\t\t<masterclipid>{mid}</masterclipid>\n"
+            + files.xml(ev)
+            + "\t\t\t\t\t\t\t\t\t</clipitem>\n"
+            "\t\t\t\t\t\t\t\t</track>\n"
+            "\t\t\t\t\t\t\t</video>\n"
+        )
+    kanaele = min(int(ev.get("audio_kanaele") or 0), 2)
+    if kanaele:
+        tracks = ""
+        for ch in range(1, kanaele + 1):
+            tracks += (
+                "\t\t\t\t\t\t\t\t<track>\n"
+                f'\t\t\t\t\t\t\t\t\t<clipitem id="{mid}-a{ch}">\n'
+                f"\t\t\t\t\t\t\t\t\t\t<name>{name}</name>\n"
+                f"\t\t\t\t\t\t\t\t\t\t<masterclipid>{mid}</masterclipid>\n"
+                + files.xml(ev) +
+                "\t\t\t\t\t\t\t\t\t\t<sourcetrack>\n"
+                "\t\t\t\t\t\t\t\t\t\t\t<mediatype>audio</mediatype>\n"
+                f"\t\t\t\t\t\t\t\t\t\t\t<trackindex>{ch}</trackindex>\n"
+                "\t\t\t\t\t\t\t\t\t\t</sourcetrack>\n"
+                "\t\t\t\t\t\t\t\t\t</clipitem>\n"
+                "\t\t\t\t\t\t\t\t</track>\n"
+            )
+        media += f"\t\t\t\t\t\t\t<audio>\n{tracks}\t\t\t\t\t\t\t</audio>\n"
+    return (
+        f'\t\t\t\t\t<clip id="{mid}" explodedTracks="true">\n'
+        f"\t\t\t\t\t\t<name>{name}</name>\n"
+        f"\t\t\t\t\t\t<duration>{dur}</duration>\n"
+        + _rate_xml(f_tb, f_ntsc, "\t\t\t\t\t\t")
+        + "\t\t\t\t\t\t<in>0</in>\n"
+        f"\t\t\t\t\t\t<out>{dur}</out>\n"
+        f"\t\t\t\t\t\t<masterclipid>{mid}</masterclipid>\n"
+        "\t\t\t\t\t\t<ismasterclip>TRUE</ismasterclip>\n"
+        f"\t\t\t\t\t\t<media>\n{media}\t\t\t\t\t\t</media>\n"
+        "\t\t\t\t\t</clip>\n"
+    )
+
+
 def _clipitem(ev: dict, idx: int, files: _FileRegistry, seq_fps: float,
               mediatype: str, seq_w: int, seq_h: int,
               trackindex: int = 1) -> str:
@@ -406,8 +465,12 @@ def _clipitem(ev: dict, idx: int, files: _FileRegistry, seq_fps: float,
             f"\t\t\t\t\t\t\t<trackindex>{trackindex}</trackindex>\n"
             "\t\t\t\t\t\t</sourcetrack>\n"
         )
+    master = files.masterclip_id(ev["datei"])
+    master_line = (f"\t\t\t\t\t\t<masterclipid>{master}</masterclipid>\n"
+                   if master else "")
     return (
         f'\t\t\t\t\t<clipitem id="clipitem-{idx}">\n'
+        + master_line +
         f"\t\t\t\t\t\t<name>{escape(ev['name'])}</name>\n"
         "\t\t\t\t\t\t<enabled>TRUE</enabled>\n"
         f"\t\t\t\t\t\t<duration>{src_out - src_in}</duration>\n"
@@ -466,6 +529,19 @@ def generate_fcpxml(project: str, progress=None) -> Path:
         return out
 
     t = timeline["tracks"]
+
+    # Masterclips ZUERST bauen: die vollen <file>-Definitionen landen damit
+    # in der Ablage "Material", die Sequenz referenziert sie nur noch.
+    vertreter: dict[str, dict] = {}
+    for key in ("V1", "V2", "V3", "A1", "A2", "A3"):
+        for ev in sorted(t[key], key=lambda e: e["timeline_start"]):
+            vertreter.setdefault(ev["datei"], ev)
+    master_xml = ""
+    for pfad, ev in vertreter.items():
+        mid = f"masterclip-{len(files.master_ids) + 1}"
+        files.master_ids[pfad] = mid
+        master_xml += _masterclip(ev, mid, files)
+
     video_tracks = video_track(t["V1"]) + video_track(t["V2"]) + video_track(t["V3"])
     audio_tracks = (audio_track_group(t["A1"])
                     + audio_track_group(t["A2"], enabled=False)  # Backup stumm
@@ -473,9 +549,23 @@ def generate_fcpxml(project: str, progress=None) -> Path:
 
     duration = to_frames(timeline["dauer"], fps)
     ntsc_str = "TRUE" if ntsc else "FALSE"
+    # Projekt > Ablage "<projekt> – autoedit" > (Ablage "Material" + Sequenz):
+    # Premiere legt beim Import alles in diese eine Ablage, statt die Clips
+    # lose ins Projektfenster zu streuen.
     xml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE xmeml>
 <xmeml version="4">
+\t<project>
+\t\t<name>{escape(project)} – autoedit</name>
+\t\t<children>
+\t\t\t<bin>
+\t\t\t\t<name>{escape(project)} – autoedit</name>
+\t\t\t\t<children>
+\t\t\t\t\t<bin>
+\t\t\t\t\t\t<name>Material</name>
+\t\t\t\t\t\t<children>
+{master_xml}\t\t\t\t\t\t</children>
+\t\t\t\t\t</bin>
 \t<sequence id="sequence-1">
 \t\t<name>{escape(timeline["name"])}</name>
 \t\t<duration>{duration}</duration>
@@ -504,6 +594,10 @@ def generate_fcpxml(project: str, progress=None) -> Path:
 {audio_tracks}\t\t\t</audio>
 \t\t</media>
 \t</sequence>
+\t\t\t\t</children>
+\t\t\t</bin>
+\t\t</children>
+\t</project>
 </xmeml>
 """
     out = paths.output_dir(project) / f"{project}{FCPXML_SUFFIX}"

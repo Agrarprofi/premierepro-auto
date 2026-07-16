@@ -59,6 +59,7 @@ projects/<projektname>/
     ├── broll_matches.json
     ├── reel.srt / reel_korrigiert.srt
     ├── <projekt>_premiere.xml   # → Premiere: Datei > Importieren
+    │                            #   (landet in Ablage "<projekt> – autoedit")
     ├── costs.json / log.txt
     └── preview_*.mp4      # Sync- und Schnitt-Vorschauen
 ```

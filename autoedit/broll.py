@@ -22,6 +22,35 @@ MIN_ABSTAND_SEC = 1.0   # nie zwei B-Rolls direkt hintereinander
 
 # ------------------------------------------------------------ Analyse
 
+def _fingerprint(f: Path) -> str:
+    """Änderungs-Kennung einer Datei (Größe + mtime): Die Vision-Analyse
+    hängt nur vom Dateiinhalt ab und muss pro Datei nur EINMAL laufen."""
+    st = f.stat()
+    return f"{st.st_size}_{int(st.st_mtime)}"
+
+
+def _cached_entry(project: str, alt: dict[str, dict], clip: Path,
+                  base: Path) -> dict | None:
+    """Index-Eintrag aus einem früheren Lauf wiederverwenden, wenn die
+    Datei unverändert ist und das Thumbnail noch existiert."""
+    entry = alt.get(str(clip.relative_to(base)))
+    if not entry or entry.get("fingerprint") != _fingerprint(clip):
+        return None
+    thumb = entry.get("thumbnail")
+    if not thumb or not (paths.output_dir(project) / thumb).is_file():
+        return None
+    return entry
+
+
+def clips_to_analyze(project: str) -> list[Path]:
+    """B-Roll-Clips, für die noch keine (gültige) Analyse im Index liegt."""
+    base = paths.project_dir(project)
+    index = load_broll_index(project) or {}
+    alt = {e["datei"]: e for e in index.get("clips", [])}
+    return [c for c in ingest.clips_for_role(project, "broll")
+            if _cached_entry(project, alt, c, base) is None]
+
+
 def extract_frames(project: str, clip: Path) -> list[Path]:
     """Alle 2 s ein Frame, auf max. 768 px Breite verkleinert."""
     out_dir = paths.output_dir(project) / "tmp" / "broll_frames" / clip.stem
@@ -49,20 +78,40 @@ def _sample(frames: list[Path], limit: int) -> list[Path]:
     return [frames[round(i * step)] for i in range(limit)]
 
 
-def analyze_broll(project: str, progress=None, client=None) -> dict:
+def analyze_broll(project: str, progress=None, client=None,
+                  force: bool = False) -> dict:
+    """Vision-Analyse aller B-Roll-Clips.
+
+    Bereits analysierte, unveränderte Dateien werden aus dem bestehenden
+    Index übernommen (Fingerprint Größe+mtime) - die teure Vision-Analyse
+    läuft pro Datei nur einmal. force=True erzwingt eine Neuanalyse.
+    """
     cfg = config.load_config(project)
     clips = ingest.clips_for_role(project, "broll")
     if not clips:
         raise RuntimeError("Keine B-Roll-Clips in input/broll gefunden.")
-    if client is None:
+
+    base = paths.project_dir(project)
+    index_alt = load_broll_index(project) or {}
+    alt = {e["datei"]: e for e in index_alt.get("clips", [])}
+    todo = [c for c in clips
+            if force or _cached_entry(project, alt, c, base) is None]
+    if todo and client is None:
+        # Client nur anlegen, wenn wirklich analysiert werden muss
         client = claude_client.ClaudeClient(model=cfg["claude_modell"], project=project)
 
     thumbs_dir = paths.output_dir(project) / "broll_thumbs"
     thumbs_dir.mkdir(parents=True, exist_ok=True)
-    base = paths.project_dir(project)
 
     entries = []
     for i, clip in enumerate(clips):
+        cached = None if force else _cached_entry(project, alt, clip, base)
+        if cached is not None:
+            entries.append(cached)
+            if progress:
+                progress(i / len(clips),
+                         f"{clip.name}: unverändert – Analyse aus dem Cache")
+            continue
         if progress:
             progress(i / len(clips), f"Analysiere B-Roll {clip.name}")
         info = ffmpeg_utils.media_info(clip)
@@ -100,6 +149,7 @@ def analyze_broll(project: str, progress=None, client=None) -> dict:
             "schlagwoerter": [str(s) for s in data.get("schlagwoerter", [])][:8],
             "beste_einstiegszeit": round(einstieg, 2),
             "thumbnail": f"broll_thumbs/{thumb.name}",
+            "fingerprint": _fingerprint(clip),
         })
 
     result = {"projekt": project, "clips": entries}
@@ -107,7 +157,9 @@ def analyze_broll(project: str, progress=None, client=None) -> dict:
         json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8"
     )
     if progress:
-        progress(1.0, f"{len(entries)} B-Roll-Clips analysiert")
+        neu = len(todo)
+        progress(1.0, f"{len(entries)} B-Roll-Clips im Index "
+                      f"({neu} neu analysiert, {len(entries) - neu} aus dem Cache)")
     return result
 
 
