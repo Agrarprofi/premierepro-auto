@@ -89,8 +89,72 @@ def _ncc_over_lags(env_ref: np.ndarray, env_clip: np.ndarray,
     return ncc, lags
 
 
-def find_offset(ref: np.ndarray, clip: np.ndarray, sr: int = SYNC_SR) -> tuple[float, float]:
-    """Offset (Sekunden) des Clips relativ zur Referenz + Konfidenz [0..1]."""
+def _top_lags(ncc: np.ndarray, lags: np.ndarray, k: int = 5,
+              min_abstand: int = 2 * ENV_SR) -> list[int]:
+    """Die k stärksten, mindestens 2 s auseinanderliegenden Grob-Peaks."""
+    order = np.argsort(ncc)[::-1]
+    picked: list[int] = []
+    for i in order:
+        if not np.isfinite(ncc[i]):
+            break
+        lag = int(lags[i])
+        if all(abs(lag - p) >= min_abstand for p in picked):
+            picked.append(lag)
+        if len(picked) >= k:
+            break
+    return picked
+
+
+def _local_ncc(ref: np.ndarray, clip: np.ndarray, offset: float,
+               frac: float, sr: int) -> float | None:
+    """Normalisierte Fein-Korrelation eines ~8-s-Ausschnitts an Position
+    frac des Überlapps (Suche ±0.35 s um den Kandidaten-Offset)."""
+    ov0 = max(0.0, offset)
+    ov1 = min(len(ref) / sr, offset + len(clip) / sr)
+    if ov1 - ov0 < MIN_OVERLAP_SEC:
+        return None
+    mitte = ov0 + frac * (ov1 - ov0)
+    r0 = int(max(ov0, mitte - 4.0) * sr)
+    r1 = int(min(ov1, mitte + 4.0) * sr)
+    c0 = int(round(r0 - offset * sr))
+    c1 = c0 + (r1 - r0)
+    if c0 < 0 or c1 > len(clip) or r1 - r0 < 2 * sr:
+        return None
+    chunk = clip[c0:c1]
+    pad = int(0.35 * sr)
+    w0, w1 = max(0, r0 - pad), min(len(ref), r1 + pad)
+    fine = signal.correlate(ref[w0:w1], chunk, mode="valid", method="fft")
+    k = int(np.argmax(fine))
+    seg_ref = ref[w0 + k : w0 + k + len(chunk)]
+    denom = float(np.linalg.norm(seg_ref) * np.linalg.norm(chunk))
+    if denom <= 0:
+        return None
+    return float(fine[k] / denom)
+
+
+def _offset_score(ref: np.ndarray, clip: np.ndarray, offset: float,
+                  sr: int = SYNC_SR) -> float:
+    """Kandidaten-Offset über den GANZEN Überlapp verifizieren.
+
+    Ein echter Offset korreliert an Anfang, Mitte UND Ende; ein
+    Schein-Peak (z.B. wiederholter Take im Interview) passt nur an
+    einer Stelle und fällt im Mittel durch.
+    """
+    scores = [s for frac in (0.12, 0.5, 0.88)
+              if (s := _local_ncc(ref, clip, offset, frac, sr)) is not None]
+    if not scores:
+        return 0.0
+    return float(np.mean([max(0.0, s) for s in scores]))
+
+
+def find_offset(ref: np.ndarray, clip: np.ndarray, sr: int = SYNC_SR,
+                mit_alternative: bool = False):
+    """Offset (Sekunden) des Clips relativ zur Referenz + Konfidenz [0..1].
+
+    mit_alternative=True liefert zusätzlich den zweitbesten Kandidaten
+    (oder None), wenn er fast genauso gut passt - bei Interviews mit
+    wiederholten Takes ist die Zuordnung sonst stumm mehrdeutig.
+    """
     if len(ref) < sr or len(clip) < sr:
         raise ValueError("Signale zu kurz für Sync (< 1 s)")
 
@@ -101,9 +165,34 @@ def find_offset(ref: np.ndarray, clip: np.ndarray, sr: int = SYNC_SR) -> tuple[f
     ncc, lags = _ncc_over_lags(env_ref, env_clip, min_overlap)
     if not np.isfinite(ncc).any():
         raise ValueError("Keine ausreichende Überlappung mit der Referenz")
-    lag_env = int(lags[int(np.argmax(ncc))])
+
+    # --- Stufe 1b: Top-Kandidaten über die GANZE Datei verifizieren
+    kandidaten = _top_lags(ncc, lags)
+    alternative: float | None = None
+    if len(kandidaten) > 1:
+        bewertet = sorted(
+            ((_offset_score(ref, clip, lag / ENV_SR, sr), lag)
+             for lag in kandidaten),
+            reverse=True,
+        )
+        if bewertet[0][0] > 0:
+            lag_env = bewertet[0][1]
+            if bewertet[1][0] >= 0.8 * bewertet[0][0]:
+                alternative = bewertet[1][1] / ENV_SR
+        else:
+            lag_env = kandidaten[0]  # Verifikation nicht möglich -> argmax
+    else:
+        lag_env = kandidaten[0]
     coarse = lag_env / ENV_SR  # ref_zeit = clip_zeit + coarse
 
+    offset, konf = _fine_offset(ref, clip, coarse, sr)
+    if mit_alternative:
+        return offset, konf, alternative
+    return offset, konf
+
+
+def _fine_offset(ref: np.ndarray, clip: np.ndarray, coarse: float,
+                 sr: int) -> tuple[float, float]:
     # --- Stufe 2: fein auf dem Rohsignal in einem Fenster um das Grobergebnis
     chunk_len = min(len(clip), int(FINE_CHUNK_SEC * sr))
     # energiereichsten Ausschnitt des Clips wählen (robuster als der Anfang)
@@ -251,7 +340,8 @@ def compute_offsets(project: str, progress=None) -> dict:
             continue
         try:
             clip = _load_wav_mono(_tmp_wav(project, f))
-            offset, konf = find_offset(ref, clip)
+            offset, konf, alternative = find_offset(ref, clip,
+                                                    mit_alternative=True)
             if konf < MIN_KONFIDENZ:
                 raise ValueError(
                     f"Korrelation zu schwach (Konfidenz {konf:.3f}) – "
@@ -259,15 +349,26 @@ def compute_offsets(project: str, progress=None) -> dict:
                 )
             entry = {"offset_sekunden": round(offset, 6),
                      "konfidenz": round(konf, 3)}
+            hinweise = []
+            if alternative is not None:
+                entry["offset_alternative"] = round(alternative, 3)
+                hinweise.append(
+                    f"⚠ mehrdeutig (wiederholte Takes?): zweitbeste "
+                    f"Übereinstimmung bei {alternative:+.2f} s – bei Versatz "
+                    "diesen Wert in die Offset-Spalte eintragen und mit der "
+                    "Sync-Vorschau prüfen"
+                )
             drift = measure_drift(ref, clip, offset)
             if drift is not None:
                 entry["drift_sekunden"] = round(drift, 4)
                 if abs(drift) > 0.04:
-                    entry["hinweis"] = (
+                    hinweise.append(
                         f"Achtung: Uhren-Drift {drift * 1000:+.0f} ms über den "
                         "Clip – bei langen Takes Kamera-Wahl in Premiere "
                         "segmentweise prüfen"
                     )
+            if hinweise:
+                entry["hinweis"] = " · ".join(hinweise)
             offsets[rel] = entry
             seq_end[role] = offset + len(clip) / SYNC_SR
         except (ValueError, ffmpeg_utils.FfmpegError) as exc:

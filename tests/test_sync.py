@@ -230,3 +230,42 @@ def test_render_sync_preview_cam_b(projekt):
     assert out.is_file()
     with pytest.raises(ValueError):
         sync_audio.render_sync_preview(projekt, rolle="broll")
+
+
+def test_offset_verification_rejects_repeated_take_alias():
+    """Interview mit wiederholtem Take: dieselben 6 s Audio kommen an zwei
+    Stellen der Referenz vor. Die Kandidaten-Verifikation wählt den Offset,
+    der über den GANZEN Clip passt - nicht den Schein-Treffer."""
+    rng = np.random.default_rng(11)
+    sr = sync_audio.SYNC_SR
+    ref = rng.standard_normal(60 * sr).astype(np.float32) * 0.3
+    # 6-s-"Take" bei 10 s wird bei 40 s wiederholt
+    ref[40 * sr:46 * sr] = ref[10 * sr:16 * sr]
+
+    # Clip = 20 s ab Sekunde 8 (enthält den Take) -> wahre Position 8.0
+    clip = ref[8 * sr:28 * sr] * 0.7
+    offset, konf, alternative = sync_audio.find_offset(
+        ref, clip, mit_alternative=True)
+    assert offset == pytest.approx(8.0, abs=0.02)
+    assert konf > 0.5
+    # Der Schein-Kandidat (Take-Kopie -> Offset 38) fällt durch
+    assert alternative is None
+    assert sync_audio._offset_score(ref, clip, 8.0) > \
+        2 * sync_audio._offset_score(ref, clip, 38.0)
+
+
+def test_offset_reports_genuine_ambiguity():
+    """Clip existiert IDENTISCH an zwei Stellen der Referenz -> beide
+    Offsets gültig, die Alternative wird gemeldet (Hinweis im Dashboard)."""
+    rng = np.random.default_rng(12)
+    sr = sync_audio.SYNC_SR
+    ref = rng.standard_normal(60 * sr).astype(np.float32) * 0.3
+    ref[40 * sr:48 * sr] = ref[10 * sr:18 * sr]
+    clip = ref[10 * sr:18 * sr] * 0.8
+
+    offset, _, alternative = sync_audio.find_offset(
+        ref, clip, mit_alternative=True)
+    assert alternative is not None
+    gefunden = sorted([offset, alternative])
+    assert gefunden[0] == pytest.approx(10.0, abs=0.05)
+    assert gefunden[1] == pytest.approx(40.0, abs=0.05)
