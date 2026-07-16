@@ -521,6 +521,7 @@ async function pollJob(job, onDone, elSel = "#job-status") {
     try { await api(`/api/jobs/${job.id}/cancel`, { method: "POST" }); }
     catch (e) { /* Job evtl. schon fertig */ }
   };
+  let statusStand = null;
   const timer = setInterval(async () => {
     try {
       const j = await api(`/api/jobs/${job.id}`);
@@ -528,8 +529,23 @@ async function pollJob(job, onDone, elSel = "#job-status") {
       $(".pct", el).textContent = `${Math.round(j.fortschritt * 100)} %`;
       $(".elapsed", el).textContent = fmtLaufzeit(j.laufzeit_sekunden || 0);
       $(".bar > div", el).style.width = `${j.fortschritt * 100}%`;
+      tick++;
       // Während der Warteschlange die Projektliste (x/8) mitziehen
-      if (isBatch && ++tick % 8 === 0) loadProjects();
+      if (isBatch && tick % 8 === 0) loadProjects();
+      // Ampeln LIVE mitziehen: fertige Schritte werden sofort grün,
+      // nicht erst am Ende der ganzen Kette
+      if (currentProject && overview && tick % 3 === 0) {
+        try {
+          const st = await api(`/api/projects/${currentProject}/status`);
+          const neu = JSON.stringify(st);
+          if (neu !== statusStand) {
+            statusStand = neu;
+            overview.status = st;
+            renderStatusChain();
+            renderNextStep();
+          }
+        } catch (e) { /* egal, nächster Tick */ }
+      }
       if (j.status !== "laeuft") {
         clearInterval(timer);
         pollingJobId = null;

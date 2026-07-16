@@ -341,3 +341,15 @@ def test_input_files_watch_endpoint(client, projekt):
     r2 = client.get(f"/api/projects/{projekt}/input_files").json()
     assert r2["fingerprint"] != r1["fingerprint"]
     assert "frisch.mp4" in r2["dateien"]["broll"]
+
+
+def test_status_endpoint(client, projekt):
+    from autoedit import pipeline
+
+    st = client.get(f"/api/projects/{projekt}/status").json()
+    assert st["ingest"]["status"] == "offen"
+
+    pipeline.run_step(projekt, "ingest")
+    st = client.get(f"/api/projects/{projekt}/status").json()
+    assert st["ingest"]["status"] == "ok"
+    assert client.get("/api/projects/gibtsnicht/status").status_code == 404

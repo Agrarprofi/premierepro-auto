@@ -106,6 +106,14 @@ def put_config(name: str, updates: dict[str, Any]) -> dict:
         raise _err(exc)
 
 
+@app.get("/api/projects/{name}/status")
+def project_status(name: str) -> dict:
+    """Nur die Schritt-Ampeln (leichtgewichtig; wird während laufender
+    Jobs gepollt, damit fertige Schritte sofort grün werden)."""
+    _project_or_404(name)
+    return pipeline.load_status(name)
+
+
 @app.get("/api/projects/{name}/input_files")
 def input_files(name: str) -> dict:
     """Leichtgewichtige Liste der Input-Dateien (nur Verzeichnis-Scan).
