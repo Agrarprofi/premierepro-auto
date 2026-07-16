@@ -37,9 +37,13 @@ def test_select_segments_snaps_and_stores(projekt, fake_claude):
         assert seg["aktiv"] is True
         assert seg["ende"] > seg["start"]
         assert seg["text"]
-    # Segment 1: Claude wollte 5.5–10.0; gesnappt auf Wortgrenzen ±0.15
+    # Segment 1: Claude wollte 5.5–10.0; gesnappt auf Wortgrenzen ±0.15.
+    # Das Ende darf kürzer ausfallen: der Stille-Trimmer stutzt Lücken im
+    # synthetischen Burst-Audio (Detailtests in test_trim_silence_*).
     assert segs[0]["start"] == pytest.approx(5.5, abs=0.4)
-    assert segs[0]["ende"] == pytest.approx(10.0, abs=0.5)
+    assert 7.5 < segs[0]["ende"] <= 10.2
+    assert segs[0]["dauer"] == pytest.approx(
+        segs[0]["ende"] - segs[0]["start"], abs=0.01)
     assert cutting.load_segments(projekt)["segmente"] == segs
 
 
@@ -210,3 +214,93 @@ def test_broll_prompt_covers_take_joins(projekt):
     prompt = fake.prompts["broll_matching"]
     assert "Take-Übergänge" in prompt
     assert "verdecken" in prompt
+
+
+# ------------------------------------------------------------ Stille-Trimmer
+
+def test_speech_bounds():
+    import numpy as np
+
+    sr = 16000
+    rng = np.random.default_rng(1)
+    # Leises Grundrauschen, "Sprache" (lautes Rauschen) von 4.0 bis 6.5 s
+    wav = rng.standard_normal(sr * 10).astype(np.float32) * 0.002
+    wav[int(4.0 * sr):int(6.5 * sr)] += \
+        rng.standard_normal(int(2.5 * sr)).astype(np.float32) * 0.3
+
+    bounds = cutting.speech_bounds(wav, sr, 0.0, 10.0)
+    assert bounds is not None
+    erste, letzte = bounds
+    assert erste == pytest.approx(4.0, abs=0.1)
+    assert letzte == pytest.approx(6.5, abs=0.1)
+
+    # Fenster ohne Sprache bzw. komplett still -> None
+    assert cutting.speech_bounds(np.zeros(sr * 5, dtype=np.float32),
+                                 sr, 0.0, 5.0) is None
+
+
+def test_trim_silence_cuts_leading_and_trailing_pause(env, media):
+    """Die Transkript-Timestamps behaupten Sprache ab 2 s, das echte Audio
+    beginnt erst bei 6 s und endet bei 12 s -> der Trimmer misst am
+    Referenz-Audio nach und stutzt die Stille an beiden Kanten."""
+    import numpy as np
+    from scipy.io import wavfile
+
+    name = "stille"
+    paths.create_project(name)
+    base = paths.project_dir(name)
+    sr = 16000
+    rng = np.random.default_rng(3)
+    wav = np.zeros(sr * 20, dtype=np.float32)
+    wav[6 * sr:12 * sr] = rng.standard_normal(6 * sr).astype(np.float32) * 0.4
+    wavfile.write(base / "input/audio_dji/dji.wav", sr,
+                  (np.clip(wav, -0.99, 0.99) * 32767).astype(np.int16))
+
+    def words_early(wav_path, language, progress=None):
+        # Wörter angeblich von 2.0 bis ~13.1 s (WhisperX-typisch verrutscht)
+        return [{"word": f"w{i}", "start": round(2.0 + 0.4 * i, 3),
+                 "end": round(2.3 + 0.4 * i, 3)} for i in range(28)]
+
+    ingest.scan_project(name)
+    transcribe.transcribe_project(name, transcriber=words_early)
+    fake = FakeClaude(reel_segments=[
+        {"start": 2.0, "ende": 13.0, "text": "x", "begruendung": ""}])
+    cutting.select_segments(name, client=fake)
+
+    seg = cutting.load_segments(name)["segmente"][0]
+    assert seg["stille_getrimmt"] is True
+    # Start rückt von ~1.85 an den echten Sprachbeginn (6 s, minus Padding)
+    assert 5.5 < seg["start"] < 6.05
+    # Ende rückt von ~13.15 ans echte Sprachende (12 s, plus Nachlauf)
+    assert 11.9 < seg["ende"] < 12.5
+    assert seg["dauer"] == pytest.approx(seg["ende"] - seg["start"], abs=0.01)
+
+
+def test_trim_silence_keeps_tight_segments(env, media):
+    """Segmente, deren Grenzen schon am Sprachsignal liegen, bleiben
+    unangetastet."""
+    import numpy as np
+    from scipy.io import wavfile
+
+    name = "kein-trim"
+    paths.create_project(name)
+    base = paths.project_dir(name)
+    sr = 16000
+    rng = np.random.default_rng(4)
+    wav = np.zeros(sr * 20, dtype=np.float32)
+    wav[2 * sr:14 * sr] = rng.standard_normal(12 * sr).astype(np.float32) * 0.4
+    wavfile.write(base / "input/audio_dji/dji.wav", sr,
+                  (np.clip(wav, -0.99, 0.99) * 32767).astype(np.int16))
+
+    def words_ok(wav_path, language, progress=None):
+        return [{"word": f"w{i}", "start": round(2.2 + 0.4 * i, 3),
+                 "end": round(2.5 + 0.4 * i, 3)} for i in range(28)]
+
+    ingest.scan_project(name)
+    transcribe.transcribe_project(name, transcriber=words_ok)
+    fake = FakeClaude(reel_segments=[
+        {"start": 3.0, "ende": 10.0, "text": "x", "begruendung": ""}])
+    cutting.select_segments(name, client=fake)
+
+    seg = cutting.load_segments(name)["segmente"][0]
+    assert "stille_getrimmt" not in seg

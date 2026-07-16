@@ -110,3 +110,24 @@ def test_music_endpoints(client, projekt, fake_claude, music_lib):
     res = client.put(f"/api/projects/{projekt}/music",
                      json={"name": "treibend_rock.wav"})
     assert res.json()["musik"]["name"] == "treibend_rock.wav"
+
+
+def test_sync_offset_and_video_korrektur_api(client, projekt, fake_claude):
+    prepared_project(projekt, fake_claude, with_broll=False)
+    url = f"/api/projects/{projekt}/sync/offsets"
+    rel = "input/cam_b/cam_b_001.mp4"
+
+    # weder Offset noch Bild-Korrektur angegeben -> 400
+    res = client.put(url, json={"relpfad": rel})
+    assert res.status_code == 400
+
+    res = client.put(url, json={"relpfad": rel,
+                                "video_korrektur_sekunden": 0.2})
+    assert res.status_code == 200
+    entry = res.json()["offsets"][rel]
+    assert entry["video_korrektur_sekunden"] == 0.2
+    assert "offset_sekunden" in entry  # berechneter Offset bleibt erhalten
+
+    res = client.put(url, json={"relpfad": "input/cam_b/gibtsnicht.mp4",
+                                "video_korrektur_sekunden": 0.2})
+    assert res.status_code == 400

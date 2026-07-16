@@ -303,6 +303,22 @@ def load_sync(project: str) -> dict | None:
     return json.loads(f.read_text(encoding="utf-8"))
 
 
+def set_video_korrektur(project: str, relpfad: str, sekunden: float) -> dict:
+    """Bild-Korrektur pro Datei: verschiebt NUR das Video dieser Kamera im
+    Export (positiv = Bild später aus der Quelle nehmen), der Ton bleibt.
+    Rettungsanker, wenn eine Datei intern Bild/Ton-versetzt ist (z.B. VFR)."""
+    sync = load_sync(project)
+    if sync is None:
+        raise RuntimeError("Erst Sync ausführen.")
+    if relpfad not in sync["offsets"]:
+        raise KeyError(f"Unbekannte Datei: {relpfad}")
+    sync["offsets"][relpfad]["video_korrektur_sekunden"] = round(float(sekunden), 6)
+    (paths.output_dir(project) / SYNC_FILE).write_text(
+        json.dumps(sync, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    return sync
+
+
 def set_manual_offset(project: str, relpfad: str, offset_sekunden: float) -> dict:
     """Offset aus dem Dashboard von Hand korrigieren (überschreibt den
     berechneten Wert in sync.json)."""

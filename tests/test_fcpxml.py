@@ -278,3 +278,45 @@ def test_export_warns_on_stale_broll_matches(projekt, fake_claude):
     cutting.update_segments(projekt, aktiv={data["segmente"][0]["id"]: False})
     timeline = fcpxml.build_timeline(projekt)
     assert any("Schnitt-Stand" in w for w in timeline["warnungen"])
+
+
+def test_video_korrektur_shifts_only_video(projekt, fake_claude):
+    """Manuelle Bild-Korrektur: das Bild (V1) rückt in der Quelle nach
+    hinten, der Kamera-Ton (A2) und Kamera B bleiben unverändert."""
+    from autoedit import sync_audio
+
+    prepared_project(projekt, fake_claude, with_broll=False)
+    vorher = fcpxml.build_timeline(projekt)
+
+    sync_audio.set_video_korrektur(projekt, "input/cam_a/cam_a_001.mov", 0.25)
+    nachher = fcpxml.build_timeline(projekt)
+
+    assert len(nachher["tracks"]["V1"]) == len(vorher["tracks"]["V1"]) > 0
+    for alt, neu in zip(vorher["tracks"]["V1"], nachher["tracks"]["V1"]):
+        assert neu["src_in"] == pytest.approx(alt["src_in"] + 0.25, abs=0.001)
+        assert neu["video_korrektur"] == 0.25
+        assert neu["timeline_start"] == alt["timeline_start"]
+    for alt, neu in zip(vorher["tracks"]["A2"], nachher["tracks"]["A2"]):
+        assert neu["src_in"] == pytest.approx(alt["src_in"], abs=0.001)
+    for alt, neu in zip(vorher["tracks"]["V2"], nachher["tracks"]["V2"]):
+        assert neu["src_in"] == pytest.approx(alt["src_in"], abs=0.001)
+
+
+def test_export_warns_on_vfr(projekt, fake_claude):
+    """VFR-Verdacht auf Kamera B -> genau eine Warnung im Export (nicht
+    pro Segment wiederholt)."""
+    import json
+
+    prepared_project(projekt, fake_claude, with_broll=False)
+    info_file = paths.output_dir(projekt) / "media_info.json"
+    media = json.loads(info_file.read_text(encoding="utf-8"))
+    for clip in media["clips"]:
+        if clip["relpfad"] == "input/cam_b/cam_b_001.mp4":
+            clip["vfr_verdacht"] = True
+    info_file.write_text(json.dumps(media, ensure_ascii=False),
+                         encoding="utf-8")
+
+    timeline = fcpxml.build_timeline(projekt)
+    vfr = [w for w in timeline["warnungen"] if "VARIABLE Framerate" in w]
+    assert len(vfr) == 1
+    assert vfr[0].startswith("input/cam_b/cam_b_001.mp4")

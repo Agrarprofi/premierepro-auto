@@ -136,20 +136,23 @@ function renderSync() {
     const drift = o.drift_sekunden != null
       ? ` · Drift ${(o.drift_sekunden * 1000).toFixed(0)} ms` : "";
     tr.innerHTML = `<td>${datei}</td>
-      <td><input type="number" step="0.001" style="width:8em"
+      <td><input class="off" type="number" step="0.001" style="width:8em"
            value="${o.offset_sekunden.toFixed(3)}"></td>
+      <td><input class="vkorr" type="number" step="0.04" style="width:6em"
+           value="${(o.video_korrektur_sekunden || 0).toFixed(3)}"></td>
       <td>${konf}</td><td class="muted">${o.hinweis || ""}${drift}</td>`;
-    const input = $("input", tr);
-    input.onchange = async () => {
+    const send = async body => {
       try {
         await api(`/api/projects/${currentProject}/sync/offsets`, {
-          method: "PUT",
-          body: JSON.stringify({ relpfad: datei,
-                                 offset_sekunden: Number(input.value) }),
+          method: "PUT", body: JSON.stringify({ relpfad: datei, ...body }),
         });
         refreshOverview();
       } catch (e) { alert(e.message); }
     };
+    $(".off", tr).onchange = e =>
+      send({ offset_sekunden: Number(e.target.value) });
+    $(".vkorr", tr).onchange = e =>
+      send({ video_korrektur_sekunden: Number(e.target.value) });
     tbody.appendChild(tr);
   }
 }

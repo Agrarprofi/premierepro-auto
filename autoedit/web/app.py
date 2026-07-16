@@ -222,16 +222,27 @@ def sync_preview(name: str, body: SyncPreviewOptions | None = None) -> dict:
 
 class OffsetUpdate(BaseModel):
     relpfad: str
-    offset_sekunden: float
+    offset_sekunden: float | None = None
+    video_korrektur_sekunden: float | None = None
 
 
 @app.put("/api/projects/{name}/sync/offsets")
 def put_sync_offset(name: str, body: OffsetUpdate) -> dict:
-    """Manuelle Offset-Korrektur aus der Sync-Tabelle."""
+    """Manuelle Korrekturen aus der Sync-Tabelle (Offset und/oder
+    video-only Bild-Korrektur)."""
     _project_or_404(name)
+    if body.offset_sekunden is None and body.video_korrektur_sekunden is None:
+        raise HTTPException(400, "offset_sekunden oder "
+                                 "video_korrektur_sekunden angeben")
     try:
-        return sync_audio.set_manual_offset(name, body.relpfad,
-                                            body.offset_sekunden)
+        result = None
+        if body.offset_sekunden is not None:
+            result = sync_audio.set_manual_offset(name, body.relpfad,
+                                                  body.offset_sekunden)
+        if body.video_korrektur_sekunden is not None:
+            result = sync_audio.set_video_korrektur(
+                name, body.relpfad, body.video_korrektur_sekunden)
+        return result
     except (KeyError, RuntimeError) as exc:
         raise _err(exc)
 

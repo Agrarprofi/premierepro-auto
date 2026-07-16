@@ -15,6 +15,8 @@ def test_scan_project(projekt):
     assert cam_a["breite"] == 640 and cam_a["hoehe"] == 360
     assert abs(cam_a["fps"] - 25.0) < 0.01
     assert cam_a["audio_kanaele"] == 1
+    # Synthetische Testdateien sind sauber CFR
+    assert cam_a["vfr_verdacht"] is False
 
     dji = by_role["audio_dji"][0]
     assert abs(dji["dauer"] - 30.0) < 0.2

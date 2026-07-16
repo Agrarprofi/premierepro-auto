@@ -100,9 +100,15 @@ def media_info(path: Path | str) -> dict:
         if stream.get("codec_type") == "video" and info["breite"] is None:
             info["breite"] = stream.get("width")
             info["hoehe"] = stream.get("height")
-            info["fps"] = parse_fps(
-                stream.get("avg_frame_rate") or stream.get("r_frame_rate")
-            ) or parse_fps(stream.get("r_frame_rate"))
+            fps_avg = parse_fps(stream.get("avg_frame_rate"))
+            fps_r = parse_fps(stream.get("r_frame_rate"))
+            info["fps"] = fps_avg or fps_r
+            # Variable Framerate: avg- und r-Rate weichen ab. Frame-Index
+            # und Zeit laufen dann in Premiere auseinander -> Bild-Desync.
+            info["vfr_verdacht"] = bool(
+                fps_avg and fps_r
+                and abs(fps_avg - fps_r) / max(fps_avg, fps_r) > 0.005
+            )
             info["video_codec"] = stream.get("codec_name")
             video_start = _start_time(stream)
             if not info["dauer"] and stream.get("duration"):

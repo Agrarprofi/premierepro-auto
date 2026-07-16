@@ -18,6 +18,11 @@ from . import claude_client, config, ffmpeg_utils, ingest, paths, sync_audio, tr
 SEGMENTS_FILE = "segments.json"
 STATEMENTS_FILE = "statements.json"
 PADDING_SEC = 0.15
+# Stille-Trimmer: Segmente dürfen nicht mit Stille beginnen/enden, auch wenn
+# Transkript-Timestamps daneben liegen (WhisperX dehnt Wörter über Pausen).
+STILLE_TOLERANZ = 0.35   # ab so viel führender/folgender Stille wird gestutzt
+STILLE_MAX_TRIM = 10.0   # maximal so viel wegschneiden
+STILLE_NACHLAUF = 0.25   # Luft nach dem letzten gesprochenen Laut
 PAUSE_MARKER_SEC = 1.5   # ab dieser Sprechpause wird sie im Prompt markiert
 TAKE_FENSTER = 4         # wie viele Folgepassagen auf Wiederholung geprüft werden
 TAKE_AEHNLICHKEIT = 0.7  # Token-Überlappung, ab der zwei Passagen als Takes gelten
@@ -259,6 +264,73 @@ def words_in_range(words: list[dict], start: float, ende: float) -> list[dict]:
     return [w for w in words if w["start"] >= start - 1e-6 and w["end"] <= ende + 1e-6]
 
 
+# ------------------------------------------------------------ Stille-Trimmer
+
+def speech_bounds(wav, sr: int, von: float, bis: float) -> tuple[float, float] | None:
+    """Erster und letzter Sprach-Zeitpunkt im Fenster [von, bis] (Sekunden).
+
+    Energie-basiert (20-ms-Frames, Schwelle relativ zum Fenster-Peak);
+    None, wenn im Fenster keine Sprache gefunden wird.
+    """
+    import numpy as np
+
+    a, b = max(0, int(von * sr)), min(len(wav), int(bis * sr))
+    seg = wav[a:b]
+    frame = int(0.02 * sr)
+    n = len(seg) // frame
+    if n < 3:
+        return None
+    env = np.abs(seg[: n * frame]).reshape(n, frame).mean(axis=1)
+    peak = float(np.percentile(env, 95))
+    if peak <= 1e-5:
+        return None
+    above = env > 0.12 * peak
+    # zwei aufeinanderfolgende aktive Frames = Sprache (gegen Klicks robust)
+    aktiv = above[:-1] & above[1:]
+    idx = np.flatnonzero(aktiv)
+    if len(idx) == 0:
+        return None
+    erste = von + idx[0] * frame / sr
+    letzte = von + (idx[-1] + 2) * frame / sr
+    return float(erste), float(letzte)
+
+
+def _trim_silence(project: str, segmente: list[dict]) -> None:
+    """Segmentgrenzen am echten Audio nachmessen und Stille wegstutzen.
+
+    Schützt Take-Nahtstellen (fortsetzung): dort wird nicht getrimmt.
+    """
+    try:
+        ref_file, _ = sync_audio.reference_source(project)
+        wav = sync_audio._load_wav_mono(sync_audio._tmp_wav(project, ref_file))
+    except Exception:  # noqa: BLE001 - Trimmen ist Verbesserung, kein Muss
+        return
+    sr = sync_audio.SYNC_SR
+    for i, seg in enumerate(segmente):
+        naht_davor = bool(seg.get("fortsetzung"))
+        naht_danach = (i + 1 < len(segmente)
+                       and bool(segmente[i + 1].get("fortsetzung")))
+        bounds = speech_bounds(wav, sr, seg["start"],
+                               min(seg["ende"], seg["start"] + 3600))
+        if bounds is None:
+            continue
+        erste, letzte = bounds
+        neu_start, neu_ende = seg["start"], seg["ende"]
+        if not naht_davor and erste - seg["start"] > STILLE_TOLERANZ:
+            neu_start = min(seg["start"] + STILLE_MAX_TRIM,
+                            max(seg["start"], erste - PADDING_SEC))
+        if not naht_danach and seg["ende"] - letzte > STILLE_TOLERANZ:
+            neu_ende = max(seg["ende"] - STILLE_MAX_TRIM,
+                           min(seg["ende"], letzte + STILLE_NACHLAUF))
+        if neu_ende - neu_start < 0.4:
+            continue
+        if neu_start != seg["start"] or neu_ende != seg["ende"]:
+            seg["start"] = round(neu_start, 3)
+            seg["ende"] = round(neu_ende, 3)
+            seg["dauer"] = round(neu_ende - neu_start, 3)
+            seg["stille_getrimmt"] = True
+
+
 # ------------------------------------------------------------ Auswahl-Lauf
 
 def select_segments(project: str, modus: str = "auto", skript: str | None = None,
@@ -328,6 +400,10 @@ def select_segments(project: str, modus: str = "auto", skript: str | None = None
         if seg["ende"] - seg["start"] > 2 * PADDING_SEC:
             seg["start"] = round(seg["start"] + PADDING_SEC, 3)
             seg["dauer"] = round(seg["ende"] - seg["start"], 3)
+
+    # Stille am echten Audio nachmessen und wegstutzen (Transkript-Timestamps
+    # sind bei Pausen nicht verlässlich -> "3-7 s Stille vor der Aussage")
+    _trim_silence(project, segmente)
 
     result = {
         "projekt": project,

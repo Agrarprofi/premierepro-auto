@@ -161,12 +161,29 @@ def build_timeline(project: str) -> dict:
                     f"{seg['start']:.2f} s nicht abgedeckt"
                 )
             for p in pieces:
-                ev = _event_from_clip(base, p["clip"], t0 + p["rel_start"],
+                clip = p["clip"]
+                ev = _event_from_clip(base, clip, t0 + p["rel_start"],
                                       p["dauer"], p["src_in"])
-                _apply_av_versatz(ev, p["clip"], warnungen)
+                _apply_av_versatz(ev, clip, warnungen)
+                audio_ev = dict(ev)  # Kamera-Ton VOR der Bild-Korrektur
+                entry = sync["offsets"].get(clip["relpfad"]) or {}
+                video_korr = float(entry.get("video_korrektur_sekunden") or 0.0)
+                if abs(video_korr) >= 0.001:
+                    ev["src_in"] = round(
+                        max(0.0, min(ev["src_in"] + video_korr,
+                                     ev["datei_dauer"] - ev["dauer"])), 6)
+                    ev["video_korrektur"] = video_korr
+                if clip.get("vfr_verdacht") and clip["relpfad"] not in \
+                        [w.split(" ", 1)[0] for w in warnungen]:
+                    warnungen.append(
+                        f"{clip['relpfad']} hat vermutlich VARIABLE Framerate "
+                        "– Frame-Positionen driften in Premiere. Datei nach "
+                        "CFR wandeln (z.B. HandBrake) oder Bild-Korrektur in "
+                        "der Sync-Tabelle nutzen."
+                    )
                 tracks[vtrack].append(ev)
-                if atrack and p["clip"].get("audio_kanaele"):
-                    tracks[atrack].append(dict(ev))
+                if atrack and clip.get("audio_kanaele"):
+                    tracks[atrack].append(audio_ev)
 
         # A1: Referenz-Audio – Referenzzeit == Dateizeit der Referenzdatei
         a_dauer = min(seg["dauer"], max(0.0, float(ref_clip["dauer"]) - seg["start"]))
