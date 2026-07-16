@@ -96,6 +96,13 @@ Der Schnitt-Schritt arbeitet auf annotiertem Rohmaterial: Sprechpausen werden
 markiert und **wiederholte Anläufe erkannt** (Falschstart → Pause → der Satz
 kommt nochmal, meist sauber). Regel: immer der letzte Take.
 
+**Skript/Leitfaden (optional):** Text ins Feld im Schnitt-Bereich tippen
+oder eine `skript.txt` in den Projektordner legen. Das Skript dient als
+inhaltlicher Leitfaden, nicht als sture Vorgabe: Die KI gleicht das
+Material damit ab und wählt die stärksten Aussagen zur gewünschten
+Botschaft – Hook-Dramaturgie und Take-Regeln gelten weiter, Wortlaut und
+Reihenfolge des Skripts sind nicht bindend.
+
 1. **Aussagen-Analyse**: Claude bewertet alle Statements (Punkte 0–10,
    Kategorie Hook/Kern/Abschluss, Qualität sauber/Versprecher/abgebrochen)
    → `output/statements.json`, im Dashboard einsehbar.

@@ -227,13 +227,27 @@ _AUSGABE_FORMAT = (
 def _prompt_script(transcript: dict, skript: str, reel_laenge: float,
                    cfg: dict, statements: dict | None) -> str:
     return (
-        "Du bist ein erfahrener Video-Editor. Der Nutzer hat ein eigenes "
-        "Skript bzw. Stichworte vorgegeben. Suche im Transkript die Passagen, "
-        "die diesem Skript am besten entsprechen, in der Reihenfolge des "
-        f"Skripts. Ziel-Gesamtlänge: maximal {reel_laenge:.0f} Sekunden.\n"
+        "Du bist ein erfahrener Video-Editor. Der Nutzer hat ein Skript bzw. "
+        "Stichworte als INHALTLICHEN LEITFADEN vorgegeben. Baue daraus ein "
+        f"schlüssiges Reel von maximal {reel_laenge:.0f} Sekunden.\n\n"
+        "So gehst du vor:\n"
+        "- Gleiche das Transkript mit dem Leitfaden ab: welche Aussagen im "
+        "Material transportieren die gewünschten Botschaften am besten?\n"
+        "- Nimm dabei IMMER die stärkste, sauberste und schönste Formulierung "
+        "aus dem Material (siehe Vorab-Analyse) – NICHT die wörtlichste "
+        "Entsprechung zum Skript. Der Leitfaden sagt WAS, das Material "
+        "entscheidet WIE.\n"
+        "- Dramaturgie geht vor Skript-Reihenfolge: packender Hook am Anfang, "
+        "dann Kernaussagen, sauberer Abschluss. Weiche von der Reihenfolge "
+        "des Leitfadens ab, wenn das Reel dadurch besser wird.\n"
+        "- Gibt das Material zu einem Punkt des Leitfadens nichts Gutes her, "
+        "lass ihn weg. Umgekehrt darfst du eine herausragende Aussage "
+        "aufnehmen, die nicht im Leitfaden steht, wenn sie zur Botschaft "
+        "passt.\n"
         + _ROHMATERIAL_REGELN +
-        "Vollständige Sätze, keine Schnitte mitten im Wort.\n\n"
-        f"Skript/Stichworte des Nutzers:\n{skript}\n"
+        "Vollständige Sätze, keine Schnitte mitten im Wort; die Summe der "
+        "Segmentdauern darf die Maximallänge nicht überschreiten.\n\n"
+        f"Leitfaden des Nutzers:\n{skript}\n"
         + _statements_block(statements)
         + _hinweise_block(cfg) +
         f"\nTranskript (Zeiten in Sekunden):\n{annotate_transcript(transcript)}\n\n"

@@ -138,10 +138,8 @@ function renderSkript() {
   const sd = overview.skript_datei;
   if (sd) {
     hint.classList.remove("hidden");
-    hint.innerHTML = `📄 Skript-Datei <b>${sd.datei}</b> im Projektordner `
-      + `gefunden – sie wird im Modus „Nach eigenem Skript/Stichworten" `
-      + `automatisch verwendet (das Eingabefeld hat Vorrang, wenn es `
-      + `ausgefüllt ist).`;
+    hint.innerHTML = `📄 Aus Skript-Datei <b>${sd.datei}</b> übernommen – `
+      + `hier anpassbar (das Feld hat Vorrang vor der Datei).`;
     if (!ta.value) ta.value = sd.text;
   } else {
     hint.classList.add("hidden");
@@ -418,8 +416,9 @@ function runStep(step) {
 }
 
 function cutBody() {
-  const modus = $("#cut-mode").value;
-  return { modus, skript: modus === "skript" ? $("#cut-script").value : null };
+  // Skript-Feld ausgefüllt -> Leitfaden-Modus, sonst vollautomatisch
+  const skript = $("#cut-script").value.trim();
+  return skript ? { modus: "skript", skript } : { modus: "auto", skript: null };
 }
 
 // ------------------------------------------------------------ Events
@@ -496,8 +495,6 @@ function bindProjectEvents() {
   $("#btn-sync-preview-a").onclick = syncPreview("cam_a");
   $("#btn-sync-preview-b").onclick = syncPreview("cam_b");
 
-  $("#cut-mode").onchange = e =>
-    $("#cut-script").classList.toggle("hidden", e.target.value !== "skript");
   $("#btn-cut").onclick = () => runStep("schnitt");
   $("#btn-cut-preview").onclick = () =>
     startJob(`/api/projects/${currentProject}/cut/preview`, null, () => {

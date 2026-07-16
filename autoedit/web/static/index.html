@@ -111,17 +111,16 @@
 
   <section>
     <h3>Schnitt (Reel-Auswahl)</h3>
+    <label class="block">Skript / Leitfaden (optional – leer lassen =
+      vollautomatische Auswahl)
+      <textarea id="cut-script" rows="4"
+        placeholder="Kernbotschaften oder Skript hier eintippen. Die KI gleicht das Material damit ab und wählt die stärksten Aussagen dazu aus (Hook zuerst) – sie hält sich nicht stur an Wortlaut oder Reihenfolge."></textarea>
+    </label>
+    <p id="skript-hint" class="muted hidden"></p>
     <div class="row">
-      <select id="cut-mode">
-        <option value="auto">Automatisch (Hook/Kern/Abschluss)</option>
-        <option value="skript">Nach eigenem Skript/Stichworten</option>
-      </select>
       <button id="btn-cut">Segmente wählen lassen</button>
       <button id="btn-cut-preview">Vorschau rendern (720p)</button>
     </div>
-    <textarea id="cut-script" class="hidden" rows="4"
-      placeholder="Eigenes Skript oder Stichworte …"></textarea>
-    <p id="skript-hint" class="muted hidden"></p>
     <details id="statements-box" class="hidden">
       <summary>Aussagen-Analyse (Bewertung aller Statements)</summary>
       <table id="statements-table">

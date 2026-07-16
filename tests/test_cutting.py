@@ -336,3 +336,22 @@ def test_load_script_file_and_fallback(projekt, fake_claude):
     cutting.select_segments(projekt, modus="skript",
                             skript="Nur der Traktor", client=fake_claude)
     assert "Nur der Traktor" in fake_claude.prompts["reel_auswahl"]
+
+
+def test_script_prompt_is_leitfaden_not_stur(projekt, fake_claude):
+    """Skript-Modus: Das Skript ist inhaltlicher Leitfaden – der Prompt
+    verlangt die stärksten Aussagen (Vorab-Analyse), Hook-Dramaturgie und
+    erlaubt Abweichungen, statt stur Wortlaut/Reihenfolge zu folgen."""
+    _prep(projekt)
+    cutting.select_segments(projekt, modus="skript",
+                            skript="Bodengesundheit zuerst",
+                            client=fake_claude)
+    prompt = fake_claude.prompts["reel_auswahl"]
+    assert "LEITFADEN" in prompt
+    assert "Hook" in prompt
+    assert "Weiche von der Reihenfolge" in prompt
+    assert "Vorab-Analyse" in prompt         # Aussagen-Bewertung fließt ein
+    assert "SAUBERSTEN Take" in prompt       # Take-Regeln gelten weiter
+    assert "Bodengesundheit zuerst" in prompt
+    # Aussagen-Analyse lief auch im Skript-Modus
+    assert "aussagen_analyse" in fake_claude.calls
