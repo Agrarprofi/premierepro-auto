@@ -136,13 +136,19 @@ def _video_encoder() -> str:
 
 def _encoder_args(breite: int | None, hoehe: int | None,
                   fps: float | None) -> list[str]:
+    # Schnittfreundlich kodieren: KEINE B-Frames und kurze GOPs (2 s) -
+    # Premieres Frame-Abruf stolpert sonst über einzelne Frames
+    # ("Fehler beim Abruf von Frame ..., wird ersetzt").
+    gop = str(int(round((fps or 25.0) * 2)))
     if _video_encoder() == "h264_videotoolbox":
         # Hardware-Encoder kennt kein CRF: Bitrate großzügig nach
         # Auflösung/Framerate (~0.09 bit/Pixel), 8-80 MBit/s
         pixel_rate = (breite or 1920) * (hoehe or 1080) * (fps or 25.0)
         bitrate = int(max(8e6, min(80e6, pixel_rate * 0.09)))
-        return ["-c:v", "h264_videotoolbox", "-b:v", str(bitrate)]
-    return ["-c:v", "libx264", "-preset", "fast", "-crf", "16"]
+        return ["-c:v", "h264_videotoolbox", "-b:v", str(bitrate),
+                "-bf", "0", "-g", gop, "-pix_fmt", "yuv420p"]
+    return ["-c:v", "libx264", "-preset", "fast", "-crf", "16",
+            "-bf", "0", "-g", gop]
 
 
 def convert_to_cfr(src: Path | str, dst: Path | str, fps_bruch: str,

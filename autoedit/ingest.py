@@ -12,6 +12,9 @@ AUDIO_EXTS = {".wav", ".mp3", ".m4a", ".aif", ".aiff", ".flac"}
 
 MEDIA_INFO_FILE = "media_info.json"
 CFR_DIR = "cfr"
+# Version der Encoder-Einstellungen: Erhöhung erzwingt eine einmalige
+# Neu-Wandlung vorhandener Kopien (v2 = keine B-Frames, kurze GOPs)
+CFR_VERSION = 2
 # Automatisch gewandelt werden nur die Interview-Kameras: dort zerstört
 # VFR-Drift den Lippensync über die lange Laufzeit. B-Roll (kurze
 # Ausschnitte, kein Sync-Bezug) wäre verschwendete Rechenzeit - bei
@@ -156,12 +159,18 @@ def _ensure_cfr(project: str, src: Path, info: dict, progress=None,
     ziel = seq_fps if seq_fps else (info["fps"] or 25.0)
     fps_f, fps_bruch = ffmpeg_utils.nearest_standard_fps(ziel)
     dst = paths.output_dir(project) / CFR_DIR / info["rolle"] / src.name
+    meta_datei = dst.with_name(dst.name + ".meta.json")
 
     aktuell = None
     if dst.is_file() and dst.stat().st_mtime >= src.stat().st_mtime:
-        aktuell = ffmpeg_utils.media_info(dst)
-        if not aktuell.get("fps") or abs(aktuell["fps"] - fps_f) >= 0.01:
-            aktuell = None  # Kopie hat die falsche Rate -> neu wandeln
+        try:
+            meta = json.loads(meta_datei.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            meta = {}
+        if meta.get("version") == CFR_VERSION:
+            aktuell = ffmpeg_utils.media_info(dst)
+            if not aktuell.get("fps") or abs(aktuell["fps"] - fps_f) >= 0.01:
+                aktuell = None  # Kopie hat die falsche Rate -> neu wandeln
 
     if aktuell is None:
         if progress:
@@ -182,6 +191,9 @@ def _ensure_cfr(project: str, src: Path, info: dict, progress=None,
         except ffmpeg_utils.FfmpegError as exc:
             info["cfr_fehler"] = str(exc)[-300:]
             return info
+        meta_datei.write_text(
+            json.dumps({"version": CFR_VERSION, "fps": fps_f}),
+            encoding="utf-8")
         aktuell = ffmpeg_utils.media_info(dst)
     neu = aktuell
     for key in ("rolle", "name", "relpfad"):

@@ -200,3 +200,29 @@ def test_kamera_wird_auf_sequenz_rate_normalisiert(projekt, media):
     # die 25p-Kamera braucht jetzt ihrerseits eine 50p-Kopie
     sauber = [c for c in result["clips"] if c["name"] == "cam_a_001.mov"][0]
     assert sauber.get("cfr_pfad")
+
+
+def test_cfr_version_erzwingt_neuwandlung(projekt, media):
+    """Encoder-Einstellungen geändert (CFR_VERSION hochgezählt): alte
+    Kopien werden beim nächsten Scan einmalig neu kodiert."""
+    import json as _json
+
+    from tests.conftest import make_vfr
+
+    make_vfr(media["root"] / "cam_b_001.mp4",
+             paths.input_dir(projekt, "cam_b") / "cam_b_vfr.mp4")
+    result = ingest.scan_project(projekt)
+    clip = [c for c in result["clips"] if c["name"] == "cam_b_vfr.mp4"][0]
+    kopie = ingest.clip_datei(projekt, clip)
+    meta = kopie.with_name(kopie.name + ".meta.json")
+    assert _json.loads(meta.read_text())["version"] == ingest.CFR_VERSION
+
+    # alte Version simulieren -> Rescan wandelt neu
+    meta.write_text(_json.dumps({"version": ingest.CFR_VERSION - 1}))
+    alt_mtime = kopie.stat().st_mtime
+    import os
+    import time as _time
+    os.utime(kopie, (alt_mtime - 100, alt_mtime - 100))  # eindeutig älter
+    ingest.scan_project(projekt)
+    assert kopie.stat().st_mtime != alt_mtime - 100
+    assert _json.loads(meta.read_text())["version"] == ingest.CFR_VERSION

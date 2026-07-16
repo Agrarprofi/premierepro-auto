@@ -177,3 +177,24 @@ def test_match_broll_accepts_single_object(projekt, fake_claude):
     matches = broll.load_matches(projekt)["matches"]
     assert len(matches) == 1
     assert matches[0]["broll_datei"].endswith("broll_traktor.mp4")
+
+
+def test_complete_json_retries_on_truncated_answer():
+    """max_tokens erreicht = Antwort abgeschnitten: einmal mit doppeltem
+    Limit nachfassen statt stillschweigend nur 1 Element zu parsen (der
+    'nur 1 B-Roll'-Bug)."""
+    from autoedit import claude_client
+
+    client = claude_client.ClaudeClient()
+    limits = []
+
+    def fake_ct(zweck, prompt, system=None, max_tokens=4096):
+        limits.append(max_tokens)
+        if len(limits) == 1:
+            raise claude_client.AntwortAbgeschnitten("Limit erreicht")
+        return '[{"a": 1}, {"a": 2}]'
+
+    client.complete_text = fake_ct
+    raw = client.complete_json("broll_matching", "prompt", max_tokens=2048)
+    assert raw == [{"a": 1}, {"a": 2}]
+    assert limits == [2048, 4096]

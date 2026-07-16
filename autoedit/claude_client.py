@@ -31,6 +31,12 @@ MODEL_PRICES_USD_PER_MTOK: dict[str, tuple[float, float]] = {
 _cost_lock = threading.Lock()
 
 
+class AntwortAbgeschnitten(RuntimeError):
+    """Claude hat das max_tokens-Limit erreicht - die Antwort ist
+    unvollständig (z.B. abgeschnittenes JSON-Array, das dann nur als
+    EIN Element geparst würde). Niemals stillschweigend weiterverwenden."""
+
+
 class ApiGuthabenLeer(RuntimeError):
     """Anthropic-Guthaben aufgebraucht (oder Key ungültig): Jeder weitere
     Aufruf würde genauso scheitern. Stoppt Pipeline UND Warteschlange
@@ -176,6 +182,10 @@ class ClaudeClient:
                 int(getattr(usage, "input_tokens", 0) or 0),
                 int(getattr(usage, "output_tokens", 0) or 0),
             )
+        if getattr(response, "stop_reason", None) == "max_tokens":
+            raise AntwortAbgeschnitten(
+                f"Antwort für '{zweck}' am Token-Limit ({max_tokens}) "
+                "abgeschnitten")
         return response
 
     @staticmethod
@@ -191,7 +201,15 @@ class ClaudeClient:
 
     def complete_json(self, zweck: str, prompt: str, system: str | None = None,
                       max_tokens: int = 4096) -> Any:
-        text = self.complete_text(zweck, prompt, system=system, max_tokens=max_tokens)
+        try:
+            text = self.complete_text(zweck, prompt, system=system,
+                                      max_tokens=max_tokens)
+        except AntwortAbgeschnitten:
+            # einmal mit doppeltem Limit nachfassen; schlägt auch das
+            # fehl, fliegt der Fehler sichtbar nach oben
+            text = self.complete_text(zweck + "_laenger", prompt,
+                                      system=system,
+                                      max_tokens=min(max_tokens * 2, 16384))
         try:
             return extract_json(text)
         except ValueError:
