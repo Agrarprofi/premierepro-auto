@@ -243,3 +243,22 @@ def test_cancel_not_swallowed_by_optional_steps(projekt, fake_claude):
     with _pytest.raises(jobs.JobAbgebrochen):
         pipeline.run_all(projekt, fortsetzen=True, client=AbbruchClaude(),
                          transcriber=fake_transcriber)
+
+
+def test_script_save_api(client, projekt):
+    from autoedit import paths as p
+
+    url = f"/api/projects/{projekt}/script"
+    res = client.put(url, json={"text": "Mein Reel-Skript"})
+    assert res.status_code == 200
+    assert res.json()["skript_datei"]["datei"] == "skript.txt"
+    assert (p.project_dir(projekt) / "skript.txt").is_file()
+
+    # Overview liefert das gespeicherte Skript (fürs Vorbefüllen)
+    ov = client.get(f"/api/projects/{projekt}/overview").json()
+    assert ov["skript_datei"]["text"] == "Mein Reel-Skript"
+
+    # leerer Text löscht
+    res = client.put(url, json={"text": ""})
+    assert res.json()["skript_datei"] is None
+    assert not (p.project_dir(projekt) / "skript.txt").exists()

@@ -196,18 +196,43 @@ function renderFiles() {
   });
 }
 
+let skriptGespeichert = null;   // letzter gespeicherter Stand
+let skriptTimer = null;
+
 function renderSkript() {
   const hint = $("#skript-hint");
   const ta = $("#cut-script");
   const sd = overview.skript_datei;
   if (sd) {
+    if (!ta.value) {
+      ta.value = sd.text;
+      skriptGespeichert = sd.text;
+    }
     hint.classList.remove("hidden");
-    hint.innerHTML = `📄 Aus Skript-Datei <b>${sd.datei}</b> übernommen – `
-      + `hier anpassbar (das Feld hat Vorrang vor der Datei).`;
-    if (!ta.value) ta.value = sd.text;
+    hint.innerHTML = `📄 Gespeichert in <b>${sd.datei}</b> – Änderungen `
+      + `werden automatisch übernommen und gelten auch für die `
+      + `Warteschlange.`;
   } else {
+    skriptGespeichert = skriptGespeichert ?? "";
     hint.classList.add("hidden");
   }
+}
+
+async function saveSkript() {
+  const ta = $("#cut-script");
+  if (!ta || ta.value === skriptGespeichert) return;
+  try {
+    const r = await api(`/api/projects/${currentProject}/script`, {
+      method: "PUT", body: JSON.stringify({ text: ta.value }) });
+    skriptGespeichert = ta.value;
+    overview.skript_datei = r.skript_datei;
+    const hint = $("#skript-hint");
+    hint.classList.remove("hidden");
+    hint.innerHTML = r.skript_datei
+      ? `💾 Gespeichert in <b>${r.skript_datei.datei}</b> – bleibt auch `
+        + `nach einem Neustart erhalten und gilt für die Warteschlange.`
+      : "💾 Skript gelöscht – die Auswahl läuft wieder vollautomatisch.";
+  } catch (e) { /* nächster Tastendruck versucht es erneut */ }
 }
 
 function renderSync() {
@@ -586,7 +611,12 @@ function bindProjectEvents() {
   $("#btn-sync-preview-a").onclick = syncPreview("cam_a");
   $("#btn-sync-preview-b").onclick = syncPreview("cam_b");
 
-  $("#btn-cut").onclick = () => runStep("schnitt");
+  $("#cut-script").oninput = () => {
+    clearTimeout(skriptTimer);
+    skriptTimer = setTimeout(saveSkript, 800);
+  };
+  $("#cut-script").onblur = saveSkript;
+  $("#btn-cut").onclick = async () => { await saveSkript(); runStep("schnitt"); };
   $("#btn-cut-preview").onclick = () =>
     startJob(`/api/projects/${currentProject}/cut/preview`, null, () => {
       const v = $("#cut-video");

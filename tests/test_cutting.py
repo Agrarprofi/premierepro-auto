@@ -452,3 +452,32 @@ def test_split_pauses_disabled(env, media):
         {"start": 2.2, "ende": 12.8, "text": "x", "begruendung": ""}])
     cutting.select_segments(name, client=fake)
     assert len(cutting.load_segments(name)["segmente"]) == 1
+
+
+def test_save_script_file(env, media, projekt):
+    # Neu anlegen
+    sd = cutting.save_script_file(projekt, "Botschaft: Bodengesundheit")
+    assert sd["datei"] == "skript.txt"
+    assert cutting.load_script_file(projekt)["text"] == \
+        "Botschaft: Bodengesundheit"
+
+    # Überschreiben trifft dieselbe Datei
+    cutting.save_script_file(projekt, "Neue Fassung")
+    assert cutting.load_script_file(projekt)["text"] == "Neue Fassung"
+    base = paths.project_dir(projekt)
+    assert (base / "skript.txt").is_file()
+
+    # Fremde Textdateien (Notizen) werden NIE überschrieben
+    (base / "skript.txt").unlink()
+    (base / "aaa_notizen.txt").write_text("wichtige Notizen", encoding="utf-8")
+    cutting.save_script_file(projekt, "Skript-Inhalt")
+    assert (base / "aaa_notizen.txt").read_text(encoding="utf-8") == \
+        "wichtige Notizen"
+    assert (base / "skript.txt").is_file()
+    # skript.txt gewinnt die Bevorzugung
+    assert cutting.load_script_file(projekt)["datei"] == "skript.txt"
+
+    # Leerer Text löscht die Skript-Datei (Notizen bleiben)
+    assert cutting.save_script_file(projekt, "  ") is None
+    assert not (base / "skript.txt").exists()
+    assert (base / "aaa_notizen.txt").is_file()

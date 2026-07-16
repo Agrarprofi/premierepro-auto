@@ -124,19 +124,41 @@ def test_force_cfr_survives_rescan(projekt, media):
 
 
 def test_scan_converts_multiple_vfr_parallel(projekt, media):
-    """Mehrere VFR-Dateien werden in EINEM Scan (parallel) gewandelt;
-    der Gesamtfortschritt bleibt monoton in [0, 1]."""
+    """Mehrere VFR-Kameradateien werden in EINEM Scan (parallel)
+    gewandelt; der Gesamtfortschritt bleibt in [0, 1]."""
     from tests.conftest import make_vfr
 
-    broll_dir = paths.input_dir(projekt, "broll")
-    make_vfr(media["root"] / "broll_traktor.mp4", broll_dir / "vfr_1.mp4")
-    make_vfr(media["root"] / "broll_feld.mp4", broll_dir / "vfr_2.mp4")
+    make_vfr(media["root"] / "cam_a_001.mov",
+             paths.input_dir(projekt, "cam_a") / "cam_a_vfr.mov")
+    make_vfr(media["root"] / "cam_b_001.mp4",
+             paths.input_dir(projekt, "cam_b") / "cam_b_vfr.mp4")
 
     calls = []
     result = ingest.scan_project(
         projekt, progress=lambda f, m="": calls.append(f))
     by_name = {c["name"]: c for c in result["clips"]}
-    for name in ("vfr_1.mp4", "vfr_2.mp4"):
+    for name in ("cam_a_vfr.mov", "cam_b_vfr.mp4"):
         assert by_name[name].get("cfr_pfad"), name
         assert ingest.clip_datei(projekt, by_name[name]).is_file()
     assert all(0.0 <= f <= 1.0 for f in calls)
+
+
+def test_broll_vfr_not_auto_converted(projekt, media):
+    """B-Roll wird NICHT automatisch gewandelt (kein Sync-Bezug, kurze
+    Ausschnitte - verschwendete Rechenzeit); manuell geht es weiterhin."""
+    from tests.conftest import make_vfr
+
+    broll_dir = paths.input_dir(projekt, "broll")
+    make_vfr(media["root"] / "broll_traktor.mp4", broll_dir / "vfr_b.mp4")
+
+    result = ingest.scan_project(projekt)
+    clip = [c for c in result["clips"] if c["name"] == "vfr_b.mp4"][0]
+    assert clip["vfr_verdacht"] is True     # erkannt ...
+    assert "cfr_pfad" not in clip           # ... aber nicht gewandelt
+
+    # manueller Knopf wandelt trotzdem, und das übersteht den Rescan
+    neu = ingest.force_cfr(projekt, "input/broll/vfr_b.mp4")
+    assert neu["cfr_pfad"]
+    result = ingest.scan_project(projekt)
+    clip = [c for c in result["clips"] if c["name"] == "vfr_b.mp4"][0]
+    assert clip.get("cfr_erzwungen") is True and clip.get("cfr_pfad")

@@ -12,8 +12,12 @@ AUDIO_EXTS = {".wav", ".mp3", ".m4a", ".aif", ".aiff", ".flac"}
 
 MEDIA_INFO_FILE = "media_info.json"
 CFR_DIR = "cfr"
-# Rollen, deren Bild in Premiere landet - nur dort ist VFR ein Problem
-CFR_ROLLEN = {"cam_a", "cam_b", "broll"}
+# Automatisch gewandelt werden nur die Interview-Kameras: dort zerstört
+# VFR-Drift den Lippensync über die lange Laufzeit. B-Roll (kurze
+# Ausschnitte, kein Sync-Bezug) wäre verschwendete Rechenzeit - bei
+# Bedarf gibt es den manuellen "-> CFR"-Knopf.
+CFR_ROLLEN = {"cam_a", "cam_b"}
+VIDEO_ROLLEN = {"cam_a", "cam_b", "broll"}
 
 
 def _iter_media(folder: Path, exts: set[str]) -> list[Path]:
@@ -57,8 +61,9 @@ def scan_project(project: str, progress=None) -> dict:
         info["name"] = f.name
         info["relpfad"] = str(f.relative_to(paths.project_dir(project)))
         clips.append(info)
-        if role in CFR_ROLLEN and (info.get("vfr_verdacht")
-                                   or info["relpfad"] in erzwungen):
+        if role in VIDEO_ROLLEN and (
+                info["relpfad"] in erzwungen
+                or (role in CFR_ROLLEN and info.get("vfr_verdacht"))):
             zu_wandeln.append(i)
 
     if zu_wandeln:
@@ -171,7 +176,7 @@ def force_cfr(project: str, relpfad: str, progress=None) -> dict:
     for i, clip in enumerate(media["clips"]):
         if clip["relpfad"] != relpfad:
             continue
-        if clip["rolle"] not in CFR_ROLLEN:
+        if clip["rolle"] not in VIDEO_ROLLEN:
             raise RuntimeError("CFR-Wandlung gibt es nur für Videodateien.")
         neu = _ensure_cfr(project, src, dict(clip), progress=progress)
         if "cfr_pfad" not in neu:

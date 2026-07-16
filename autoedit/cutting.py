@@ -434,11 +434,10 @@ def _split_pauses(project: str, segmente: list[dict], words: list[dict],
 SKRIPT_ENDUNGEN = (".txt", ".md")
 
 
-def load_script_file(project: str) -> dict | None:
-    """Skript-Datei aus dem Projektordner einlesen (Wurzel oder input/).
+def script_file_path(project: str) -> Path | None:
+    """Pfad der Skript-Datei im Projektordner (Wurzel oder input/).
 
-    Nimmt die erste .txt/.md-Datei (alphabetisch, 'skript*'/'script*'
-    bevorzugt). Rückgabe: {"datei": name, "text": inhalt} oder None.
+    Erste .txt/.md-Datei, 'skript*'/'script*'-Namen bevorzugt.
     """
     base = paths.project_dir(project)
     kandidaten: list[Path] = []
@@ -453,10 +452,35 @@ def load_script_file(project: str) -> dict | None:
         return None
     kandidaten.sort(key=lambda f: (
         not f.stem.lower().startswith(("skript", "script")), f.name.lower()))
-    f = kandidaten[0]
+    return kandidaten[0]
+
+
+def load_script_file(project: str) -> dict | None:
+    """Skript-Datei einlesen: {"datei": name, "text": inhalt} oder None."""
+    f = script_file_path(project)
+    if f is None:
+        return None
     text = f.read_text(encoding="utf-8", errors="replace").strip()
     if not text:
         return None
+    return {"datei": f.name, "text": text}
+
+
+def save_script_file(project: str, text: str) -> dict | None:
+    """Skript aus dem Dashboard-Feld dauerhaft speichern.
+
+    Schreibt in die vorhandene skript*-Datei, sonst nach skript.txt im
+    Projektordner (andere Textdateien, z.B. Notizen, werden nie
+    überschrieben). Leerer Text löscht die Skript-Datei wieder.
+    """
+    text = (text or "").strip()
+    f = script_file_path(project)
+    if f is None or not f.stem.lower().startswith(("skript", "script")):
+        f = paths.project_dir(project) / "skript.txt"
+    if not text:
+        f.unlink(missing_ok=True)
+        return None
+    f.write_text(text + "\n", encoding="utf-8")
     return {"datei": f.name, "text": text}
 
 

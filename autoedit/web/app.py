@@ -315,6 +315,18 @@ def put_sync_offset(name: str, body: OffsetUpdate) -> dict:
         raise _err(exc)
 
 
+class ScriptUpdate(BaseModel):
+    text: str
+
+
+@app.put("/api/projects/{name}/script")
+def put_script(name: str, body: ScriptUpdate) -> dict:
+    """Skript aus dem Dashboard-Feld als skript.txt im Projekt speichern
+    (leerer Text löscht die Datei)."""
+    _project_or_404(name)
+    return {"skript_datei": cutting.save_script_file(name, body.text)}
+
+
 # ------------------------------------------------------------ Schnitt
 
 class SegmentUpdate(BaseModel):
