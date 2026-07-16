@@ -78,6 +78,18 @@
           <option value="9:16">9:16 (1080×1920)</option>
         </select>
       </label>
+      <label title="Kameras werden beim Ingest auf diese Rate normalisiert – alle Timeline-Clips laufen in EINER Rate">
+        Sequenz-Framerate
+        <select name="sequenz_fps">
+          <option value="25">25 (Standard/PAL)</option>
+          <option value="30">30</option>
+          <option value="29.97">29.97 (NTSC)</option>
+          <option value="24">24</option>
+          <option value="23.976">23.976</option>
+          <option value="50">50</option>
+          <option value="0">wie Kamera A (alt)</option>
+        </select>
+      </label>
       <label title="Zoom-Stufen automatisch auf die Kamera-Clips legen (in Premiere pro Clip nachjustierbar)">
         Auto-Zoom
         <select name="zoom_modus">

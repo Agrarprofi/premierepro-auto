@@ -124,10 +124,12 @@ def build_timeline(project: str) -> dict:
     if not cam_a:
         raise RuntimeError("Kein Kamera-A-Material.")
 
-    # Sequenzeinstellungen aus Kamera A ableiten
+    # Sequenz-Framerate: fest aus der Config (Default 25); 0 = wie
+    # Kamera A. Die Kameras sind vom Ingest auf diese Rate normalisiert.
     src = cam_a[0]
-    fps = float(src["fps"] or 25.0)
-    timebase, ntsc = rate_for_fps(fps)
+    seq_fps_cfg = float(cfg.get("sequenz_fps") or 0)
+    timebase, ntsc = rate_for_fps(seq_fps_cfg if seq_fps_cfg > 0
+                                  else float(src["fps"] or 25.0))
     if cfg["export_format"] == "9:16":
         seq_w, seq_h = 1080, 1920
     else:
@@ -137,6 +139,18 @@ def build_timeline(project: str) -> dict:
         "V1": [], "V2": [], "V3": [], "A1": [], "A2": [], "A3": [],
     }
     warnungen: list[str] = []
+
+    seq_fps_exakt = exact_fps(timebase, ntsc)
+    for role in ("cam_a", "cam_b"):
+        for clip in by_role.get(role, []):
+            if clip.get("fps") and abs(clip["fps"] - seq_fps_exakt) >= 0.01:
+                warnungen.append(
+                    f"{clip['relpfad']}: Framerate {clip['fps']:.2f} passt "
+                    f"nicht zur Sequenz ({seq_fps_exakt:g}) – Ingest neu "
+                    "ausführen, damit die Kamera auf die Sequenz-Rate "
+                    "normalisiert wird (Misch-Raten sind in Premiere "
+                    "fehleranfällig)."
+                )
 
     # Referenz-Audio-Info einmalig (steht i.d.R. schon in media_info.json)
     ref_rel = sync["referenz"]

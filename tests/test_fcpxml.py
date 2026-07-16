@@ -474,3 +474,23 @@ def test_auto_zoom_aus_and_916_kombination(projekt, fake_claude):
         pytest.approx(fill, abs=0.1)
     assert float(_scale_param(items[1]).findtext("value")) == \
         pytest.approx(fill * 1.08, abs=0.5)
+
+
+def test_sequenz_rate_aus_config(projekt, fake_claude):
+    """Die Sequenz läuft mit der konfigurierten Rate; Kameras, deren
+    Rate nicht passt, lösen eine Export-Warnung aus."""
+    prepared_project(projekt, fake_claude, with_broll=False)
+    timeline = fcpxml.build_timeline(projekt)
+    assert timeline["timebase"] == 25          # Default sequenz_fps=25
+    assert not any("Misch-Raten" in w for w in timeline["warnungen"])
+
+    # media_info manipulieren: Kamera B angeblich 50 fps -> Warnung
+    import json
+    f = paths.output_dir(projekt) / "media_info.json"
+    media = json.loads(f.read_text(encoding="utf-8"))
+    for clip in media["clips"]:
+        if clip["rolle"] == "cam_b":
+            clip["fps"] = 50.0
+    f.write_text(json.dumps(media, ensure_ascii=False), encoding="utf-8")
+    timeline = fcpxml.build_timeline(projekt)
+    assert any("passt nicht zur Sequenz" in w for w in timeline["warnungen"])

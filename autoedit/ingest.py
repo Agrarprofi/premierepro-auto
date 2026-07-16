@@ -50,6 +50,7 @@ def scan_project(project: str, progress=None) -> dict:
     vorher = load_media_info(project) or {}
     erzwungen = {c["relpfad"] for c in vorher.get("clips", [])
                  if c.get("cfr_erzwungen")}
+    seq_fps = _sequenz_fps(project)
 
     clips: list[dict] = []
     zu_wandeln: list[int] = []
@@ -61,9 +62,15 @@ def scan_project(project: str, progress=None) -> dict:
         info["name"] = f.name
         info["relpfad"] = str(f.relative_to(paths.project_dir(project)))
         clips.append(info)
+        # Kameras werden gewandelt bei VFR-Verdacht ODER wenn ihre Rate
+        # nicht zur Sequenz-Framerate passt: alle Timeline-Clips laufen
+        # dann in EINER Rate - Premieres Misch-Raten-Import entfällt.
+        rate_passt = (seq_fps is None or not info.get("fps")
+                      or abs(info["fps"] - seq_fps) < 0.01)
         if role in VIDEO_ROLLEN and (
                 info["relpfad"] in erzwungen
-                or (role in CFR_ROLLEN and info.get("vfr_verdacht"))):
+                or (role in CFR_ROLLEN
+                    and (info.get("vfr_verdacht") or not rate_passt))):
             zu_wandeln.append(i)
 
     if zu_wandeln:
@@ -123,22 +130,42 @@ def _convert_all_cfr(project: str, clips: list[dict], indizes: list[int],
             fu.result()  # Fehler/Abbruch weiterreichen
 
 
+def _sequenz_fps(project: str) -> float | None:
+    """Ziel-Framerate der Premiere-Sequenz (None = wie Kamera A)."""
+    from . import config
+
+    fps = float(config.load_config(project).get("sequenz_fps") or 0)
+    return fps if fps > 0 else None
+
+
 def _ensure_cfr(project: str, src: Path, info: dict, progress=None,
                 frac0: float = 0.0, frac1: float = 1.0) -> dict:
-    """VFR-Datei einmalig nach CFR wandeln und die Medieninfo der Kopie
+    """Datei einmalig nach CFR wandeln und die Medieninfo der Kopie
     übernehmen. Alle weiteren Schritte (Vorschau, Export) nutzen dann die
     CFR-Kopie - Bild und Ton bleiben in Premiere fest verbunden.
+
+    Kameras (cam_a/cam_b) werden auf die SEQUENZ-Framerate normalisiert,
+    B-Roll auf die nächstliegende Standardrate der Quelle. Eine
+    vorhandene Kopie mit falscher Rate wird neu gewandelt.
 
     Schlägt die Wandlung fehl, bleibt das Original mit `cfr_fehler`
     markiert; der Export warnt dann. Der Kodier-Fortschritt wird in den
     Bereich [frac0, frac1] des Gesamtfortschritts gemappt.
     """
-    fps_f, fps_bruch = ffmpeg_utils.nearest_standard_fps(info["fps"] or 25.0)
+    seq_fps = _sequenz_fps(project) if info["rolle"] in CFR_ROLLEN else None
+    ziel = seq_fps if seq_fps else (info["fps"] or 25.0)
+    fps_f, fps_bruch = ffmpeg_utils.nearest_standard_fps(ziel)
     dst = paths.output_dir(project) / CFR_DIR / info["rolle"] / src.name
-    if not dst.is_file() or dst.stat().st_mtime < src.stat().st_mtime:
+
+    aktuell = None
+    if dst.is_file() and dst.stat().st_mtime >= src.stat().st_mtime:
+        aktuell = ffmpeg_utils.media_info(dst)
+        if not aktuell.get("fps") or abs(aktuell["fps"] - fps_f) >= 0.01:
+            aktuell = None  # Kopie hat die falsche Rate -> neu wandeln
+
+    if aktuell is None:
         if progress:
-            progress(frac0, f"{src.name}: variable Framerate erkannt – "
-                            f"wandle nach {fps_f:g} fps")
+            progress(frac0, f"{src.name}: wandle nach {fps_f:g} fps (CFR)")
 
         def _cb(f: float) -> None:
             if progress:
@@ -155,7 +182,8 @@ def _ensure_cfr(project: str, src: Path, info: dict, progress=None,
         except ffmpeg_utils.FfmpegError as exc:
             info["cfr_fehler"] = str(exc)[-300:]
             return info
-    neu = ffmpeg_utils.media_info(dst)
+        aktuell = ffmpeg_utils.media_info(dst)
+    neu = aktuell
     for key in ("rolle", "name", "relpfad"):
         neu[key] = info[key]
     neu["vfr_original"] = True

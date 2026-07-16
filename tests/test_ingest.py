@@ -162,3 +162,41 @@ def test_broll_vfr_not_auto_converted(projekt, media):
     result = ingest.scan_project(projekt)
     clip = [c for c in result["clips"] if c["name"] == "vfr_b.mp4"][0]
     assert clip.get("cfr_erzwungen") is True and clip.get("cfr_pfad")
+
+
+def test_kamera_wird_auf_sequenz_rate_normalisiert(projekt, media):
+    """Kamera mit 50 fps bei Sequenz-Rate 25: wird auch OHNE VFR-Verdacht
+    gewandelt, damit alle Timeline-Clips in einer Rate laufen. Eine alte
+    Kopie mit falscher Rate wird erkannt und neu gewandelt."""
+    from autoedit import config, ffmpeg_utils
+    from tests.conftest import _run
+
+    cam_dir = paths.input_dir(projekt, "cam_a")
+    # saubere CFR-50p-Kamera erzeugen (aus der 25p-Testdatei)
+    _run([
+        "ffmpeg", "-y", "-v", "error", "-i", str(media["root"] / "cam_a_001.mov"),
+        "-vf", "fps=50", "-c:v", "libx264", "-preset", "ultrafast",
+        "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le",
+        str(cam_dir / "cam_50p.mov"),
+    ])
+
+    result = ingest.scan_project(projekt)   # Default sequenz_fps = 25
+    clip = [c for c in result["clips"] if c["name"] == "cam_50p.mov"][0]
+    assert clip.get("cfr_pfad"), "50p-Kamera muss auf 25p normalisiert werden"
+    info = ffmpeg_utils.media_info(ingest.clip_datei(projekt, clip))
+    assert info["fps"] == pytest.approx(25.0, abs=0.01)
+
+    # 25p-Kamera bleibt unangetastet (Rate passt schon)
+    sauber = [c for c in result["clips"] if c["name"] == "cam_a_001.mov"][0]
+    assert "cfr_pfad" not in sauber
+
+    # Sequenz-Rate umgestellt -> vorhandene Kopie hat falsche Rate und
+    # wird beim nächsten Scan neu gewandelt
+    config.save_config(projekt, {"sequenz_fps": 50})
+    result = ingest.scan_project(projekt)
+    clip = [c for c in result["clips"] if c["name"] == "cam_50p.mov"][0]
+    info = ffmpeg_utils.media_info(ingest.clip_datei(projekt, clip))
+    assert info["fps"] == pytest.approx(50.0, abs=0.01)
+    # die 25p-Kamera braucht jetzt ihrerseits eine 50p-Kopie
+    sauber = [c for c in result["clips"] if c["name"] == "cam_a_001.mov"][0]
+    assert sauber.get("cfr_pfad")

@@ -31,8 +31,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "schnitt_hinweise": "",
     "musik_aktiv": False,
     "untertitel_aktiv": True,
-    # "quelle" = Auflösung/Framerate der Kamera A, "9:16" = 1080x1920 (Reels)
+    # "quelle" = Auflösung der Kamera A, "9:16" = 1080x1920 (Reels)
     "export_format": "quelle",
+    # Framerate der Premiere-Sequenz. Die Interview-Kameras werden bei
+    # der CFR-Wandlung auf diese Rate normalisiert - alle Timeline-Clips
+    # laufen dann in EINER Rate (Premieres Misch-Raten-Import ist
+    # fehleranfällig, und 100-fps-Timelines bringen für Reels nichts).
+    # 0 = wie Kamera A (altes Verhalten).
+    "sequenz_fps": 25,
     # Auto-Zoom im Export: "wechsel" = statischer Punch-In auf jedem
     # 2. Segment (kaschiert Jump-Cuts, klassischer Reel-Look),
     # "sanft" = langsame Zoom-Fahrt in jedem Segment (Keyframes),
@@ -92,6 +98,10 @@ def _validate(cfg: dict[str, Any]) -> None:
         raise ValueError("pausen_schnitt_sek muss zwischen 0 und 10 liegen")
     if cfg["export_format"] not in ("quelle", "9:16"):
         raise ValueError('export_format muss "quelle" oder "9:16" sein')
+    if not (float(cfg["sequenz_fps"]) == 0
+            or 20 <= float(cfg["sequenz_fps"]) <= 120):
+        raise ValueError("sequenz_fps muss 0 (wie Kamera A) oder "
+                         "zwischen 20 und 120 liegen")
     if cfg["zoom_modus"] not in ("aus", "wechsel", "sanft"):
         raise ValueError('zoom_modus muss "aus", "wechsel" oder "sanft" sein')
     if not (0 <= float(cfg["zoom_staerke_prozent"]) <= 40):

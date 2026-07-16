@@ -632,6 +632,7 @@ function bindProjectEvents() {
       pausen_schnitt_sek: Number(form.elements.pausen_schnitt_sek.value),
       sprache: form.elements.sprache.value,
       export_format: form.elements.export_format.value,
+      sequenz_fps: Number(form.elements.sequenz_fps.value),
       zoom_modus: form.elements.zoom_modus.value,
       zoom_staerke_prozent: Number(form.elements.zoom_staerke_prozent.value),
       musik_aktiv: form.elements.musik_aktiv.checked,
