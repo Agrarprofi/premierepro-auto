@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import time
 import traceback
 import uuid
 from dataclasses import dataclass, field
@@ -18,6 +19,8 @@ class Job:
     meldung: str = ""
     fehler: str | None = None
     ergebnis: Any = None
+    gestartet: float = field(default_factory=time.time)
+    beendet: float | None = None
 
     def as_dict(self) -> dict:
         return {
@@ -28,6 +31,8 @@ class Job:
             "meldung": self.meldung,
             "fehler": self.fehler,
             "ergebnis": self.ergebnis,
+            "laufzeit_sekunden": round(
+                (self.beendet or time.time()) - self.gestartet, 1),
         }
 
 
@@ -57,6 +62,8 @@ class JobManager:
                 job.fehler = f"{type(exc).__name__}: {exc}"
                 job.meldung = str(exc)
                 traceback.print_exc()
+            finally:
+                job.beendet = time.time()
 
         threading.Thread(target=runner, name=f"job-{job.id}", daemon=True).start()
         return job

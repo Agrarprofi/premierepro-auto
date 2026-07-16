@@ -131,3 +131,39 @@ def test_sync_offset_and_video_korrektur_api(client, projekt, fake_claude):
     res = client.put(url, json={"relpfad": "input/cam_b/gibtsnicht.mp4",
                                 "video_korrektur_sekunden": 0.2})
     assert res.status_code == 400
+
+
+def test_running_job_endpoint(client, projekt):
+    import threading
+
+    from autoedit import jobs
+
+    url = f"/api/projects/{projekt}/jobs/running"
+    assert client.get(url).json()["job"] is None
+
+    ev = threading.Event()
+    job = jobs.MANAGER.start(f"{projekt}:warte", lambda p: ev.wait(5))
+    r = client.get(url).json()["job"]
+    assert r is not None
+    assert r["id"] == job.id
+    assert "laufzeit_sekunden" in r
+
+    ev.set()
+    for _ in range(100):
+        if jobs.MANAGER.get(job.id).status != "laeuft":
+            break
+        time.sleep(0.05)
+    assert client.get(url).json()["job"] is None
+
+
+def test_overview_includes_script_file(client, projekt):
+    from autoedit import paths as p
+
+    ov = client.get(f"/api/projects/{projekt}/overview").json()
+    assert ov["skript_datei"] is None
+
+    (p.project_dir(projekt) / "skript.txt").write_text(
+        "Mein Reel-Skript", encoding="utf-8")
+    ov = client.get(f"/api/projects/{projekt}/overview").json()
+    assert ov["skript_datei"]["datei"] == "skript.txt"
+    assert ov["skript_datei"]["text"] == "Mein Reel-Skript"

@@ -45,6 +45,7 @@ async function openProject(name) {
   $("#project-title").textContent = name;
   bindProjectEvents();
   await refreshOverview();
+  await attachRunningJob();
 }
 
 async function refreshOverview() {
@@ -54,6 +55,7 @@ async function refreshOverview() {
   renderFiles();
   renderSync();
   renderStatements();
+  renderSkript();
   renderSegments();
   renderBroll();
   renderSubtitleLinks();
@@ -127,6 +129,22 @@ function renderFiles() {
         return `<li>${f.name}${extra}${vfr}</li>`;
       }).join("") + "</ul>";
     div.appendChild(box);
+  }
+}
+
+function renderSkript() {
+  const hint = $("#skript-hint");
+  const ta = $("#cut-script");
+  const sd = overview.skript_datei;
+  if (sd) {
+    hint.classList.remove("hidden");
+    hint.innerHTML = `📄 Skript-Datei <b>${sd.datei}</b> im Projektordner `
+      + `gefunden – sie wird im Modus „Nach eigenem Skript/Stichworten" `
+      + `automatisch verwendet (das Eingabefeld hat Vorrang, wenn es `
+      + `ausgefüllt ist).`;
+    if (!ta.value) ta.value = sd.text;
+  } else {
+    hint.classList.add("hidden");
   }
 }
 
@@ -336,29 +354,54 @@ async function loadMusicLibrary() {
 
 // ------------------------------------------------------------ Jobs
 
+let pollingJobId = null;
+
+function fmtLaufzeit(sek) {
+  const s = Math.max(0, Math.round(sek));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")} min`;
+}
+
 async function pollJob(job, onDone) {
   const el = $("#job-status");
+  if (!el) return;
+  pollingJobId = job.id;
   el.className = "job";
-  el.innerHTML = `<div>${job.name}: <span class="msg"></span></div>
-    <div class="bar"><div></div></div>`;
+  el.innerHTML = `<div class="head"><b>${job.name.split(":").pop()}</b>
+      <span class="pct">0 %</span> · <span class="elapsed muted">0:00 min</span></div>
+    <div class="bar"><div></div></div>
+    <div class="msg muted"></div>`;
   const timer = setInterval(async () => {
     try {
       const j = await api(`/api/jobs/${job.id}`);
       $(".msg", el).textContent = j.meldung || j.status;
+      $(".pct", el).textContent = `${Math.round(j.fortschritt * 100)} %`;
+      $(".elapsed", el).textContent = fmtLaufzeit(j.laufzeit_sekunden || 0);
       $(".bar > div", el).style.width = `${j.fortschritt * 100}%`;
       if (j.status !== "laeuft") {
         clearInterval(timer);
+        pollingJobId = null;
         if (j.status === "fehler") {
           el.classList.add("fehler");
           $(".msg", el).textContent = j.fehler;
         } else {
-          $(".msg", el).textContent = j.meldung || "fertig";
+          $(".pct", el).textContent = "100 %";
+          $(".bar > div", el).style.width = "100%";
+          $(".msg", el).textContent =
+            `${j.meldung || "fertig"} (${fmtLaufzeit(j.laufzeit_sekunden || 0)})`;
           if (onDone) onDone(j);
         }
         refreshOverview();
       }
-    } catch (e) { clearInterval(timer); }
+    } catch (e) { clearInterval(timer); pollingJobId = null; }
   }, 800);
+}
+
+async function attachRunningJob() {
+  // Nach einem Seiten-Reload wieder am laufenden Job andocken
+  try {
+    const r = await api(`/api/projects/${currentProject}/jobs/running`);
+    if (r.job && r.job.id !== pollingJobId) pollJob(r.job);
+  } catch (e) { /* egal */ }
 }
 
 async function startJob(path, body, onDone) {

@@ -46,8 +46,14 @@ def test_scan_converts_vfr_to_cfr(projekt, media):
     cam_dir = paths.input_dir(projekt, "cam_b")
     make_vfr(media["root"] / "cam_b_001.mp4", cam_dir / "cam_b_vfr.mp4")
 
-    result = ingest.scan_project(projekt)
+    calls: list[tuple[float, str]] = []
+    result = ingest.scan_project(
+        projekt, progress=lambda f, m="": calls.append((f, m)))
     by_name = {c["name"]: c for c in result["clips"]}
+
+    # Fortschritt der Wandlung wird gemeldet (inkl. Prozent aus ffmpeg)
+    assert any("wandle nach" in m and "%" in m for _, m in calls)
+    assert all(0.0 <= f <= 1.0 for f, _ in calls)
 
     clip = by_name["cam_b_vfr.mp4"]
     assert clip["vfr_original"] is True

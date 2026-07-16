@@ -117,6 +117,7 @@ def overview(name: str) -> dict:
         "sync": sync_audio.load_sync(name),
         "segments": segs,
         "statements": cutting.load_statements(name),
+        "skript_datei": cutting.load_script_file(name),
         "reel_dauer": cutting.reel_dauer(name),
         "broll_index": broll.load_broll_index(name),
         "broll_matches": broll.load_matches(name),
@@ -143,6 +144,15 @@ def get_job(job_id: str) -> dict:
     if job is None:
         raise HTTPException(404, "Job nicht gefunden")
     return job.as_dict()
+
+
+@app.get("/api/projects/{name}/jobs/running")
+def running_job(name: str) -> dict:
+    """Laufender Job des Projekts (fürs Wiederanheften der
+    Fortschrittsanzeige nach einem Seiten-Reload)."""
+    _project_or_404(name)
+    job = jobs.MANAGER.running_for(f"{name}:")
+    return {"job": job.as_dict() if job else None}
 
 
 # ------------------------------------------------------------ Schritte

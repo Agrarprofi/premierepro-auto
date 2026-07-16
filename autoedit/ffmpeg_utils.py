@@ -42,6 +42,34 @@ def run(cmd: list[str], timeout: int = 1800) -> str:
     return proc.stdout
 
 
+def run_ffmpeg_progress(args: list[str], dauer: float, cb=None,
+                        timeout: int = 7200) -> None:
+    """ffmpeg mit Fortschritts-Callback ausführen.
+
+    args = alles NACH 'ffmpeg'. cb(frac) wird während des Laufs mit dem
+    Anteil 0..1 aufgerufen (aus out_time relativ zu `dauer` in Sekunden).
+    ffmpeg meldet auf pipe:1 ca. 2x pro Sekunde u.a. 'out_time_ms='
+    (Mikrosekunden, trotz des Namens).
+    """
+    cmd = ["ffmpeg", "-nostats", "-progress", "pipe:1"] + [str(a) for a in args]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True)
+    try:
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            if cb and dauer > 0 and line.startswith("out_time_ms="):
+                raw = line.split("=", 1)[1].strip()
+                if raw.lstrip("-").isdigit():
+                    cb(max(0.0, min(1.0, int(raw) / 1e6 / dauer)))
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        raise FfmpegError(f"ffmpeg-Timeout nach {timeout} s")
+    if proc.returncode != 0:
+        tail = (proc.stderr.read() if proc.stderr else "").strip()[-2000:]
+        raise FfmpegError(f"Kommando fehlgeschlagen (ffmpeg):\n{tail}")
+
+
 def ffprobe_json(path: Path | str) -> dict:
     require_ffmpeg()
     out = run(
@@ -82,24 +110,28 @@ def nearest_standard_fps(fps: float) -> tuple[float, str]:
     return min(STANDARD_FPS, key=lambda s: abs(s[0] - fps))
 
 
-def convert_to_cfr(src: Path | str, dst: Path | str, fps_bruch: str) -> Path:
+def convert_to_cfr(src: Path | str, dst: Path | str, fps_bruch: str,
+                   dauer: float = 0.0, progress=None) -> Path:
     """VFR-Datei nach konstanter Framerate wandeln.
 
     Video wird neu kodiert (CRF 16 = visuell verlustfrei), der Ton wird
     1:1 KOPIERT - Bild und Ton der Datei bleiben dadurch fest verbunden
     und die Audio-Sync-Offsets gelten unverändert.
+
+    dauer + progress: Quelldauer in Sekunden und Callback cb(frac 0..1)
+    für die Fortschrittsanzeige während der (langen) Kodierung.
     """
     src, dst = Path(src), Path(dst)
     dst.parent.mkdir(parents=True, exist_ok=True)
     tmp = dst.with_name(dst.stem + ".tmp" + dst.suffix)
     try:
-        run([
-            "ffmpeg", "-y", "-v", "error", "-i", str(src),
+        run_ffmpeg_progress([
+            "-y", "-v", "error", "-i", str(src),
             "-vf", f"fps={fps_bruch}",
             "-c:v", "libx264", "-preset", "fast", "-crf", "16",
             "-c:a", "copy",
             "-movflags", "+faststart", str(tmp),
-        ], timeout=7200)
+        ], dauer, progress)
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise

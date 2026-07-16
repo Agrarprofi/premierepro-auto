@@ -51,9 +51,9 @@ def scan_project(project: str, progress=None) -> dict:
         info["name"] = f.name
         info["relpfad"] = str(f.relative_to(paths.project_dir(project)))
         if info.get("vfr_verdacht") and role in CFR_ROLLEN:
-            info = _ensure_cfr(project, f, info,
-                               progress=progress,
-                               frac=i / max(1, len(all_files)))
+            n = max(1, len(all_files))
+            info = _ensure_cfr(project, f, info, progress=progress,
+                               frac0=i / n, frac1=(i + 1) / n)
         clips.append(info)
 
     result = {"projekt": project, "clips": clips}
@@ -65,23 +65,32 @@ def scan_project(project: str, progress=None) -> dict:
     return result
 
 
-def _ensure_cfr(project: str, src: Path, info: dict,
-                progress=None, frac: float = 0.0) -> dict:
+def _ensure_cfr(project: str, src: Path, info: dict, progress=None,
+                frac0: float = 0.0, frac1: float = 1.0) -> dict:
     """VFR-Datei einmalig nach CFR wandeln und die Medieninfo der Kopie
     übernehmen. Alle weiteren Schritte (Vorschau, Export) nutzen dann die
     CFR-Kopie - Bild und Ton bleiben in Premiere fest verbunden.
 
     Schlägt die Wandlung fehl, bleibt das Original mit `cfr_fehler`
-    markiert; der Export warnt dann.
+    markiert; der Export warnt dann. Der Kodier-Fortschritt wird in den
+    Bereich [frac0, frac1] des Gesamtfortschritts gemappt.
     """
     fps_f, fps_bruch = ffmpeg_utils.nearest_standard_fps(info["fps"] or 25.0)
     dst = paths.output_dir(project) / CFR_DIR / info["rolle"] / src.name
     if not dst.is_file() or dst.stat().st_mtime < src.stat().st_mtime:
         if progress:
-            progress(frac, f"{src.name}: variable Framerate erkannt – "
-                           f"wandle nach {fps_f:g} fps (kann dauern)")
+            progress(frac0, f"{src.name}: variable Framerate erkannt – "
+                            f"wandle nach {fps_f:g} fps")
+
+        def _cb(f: float) -> None:
+            if progress:
+                progress(frac0 + f * (frac1 - frac0),
+                         f"{src.name}: wandle nach {fps_f:g} fps (CFR) – "
+                         f"{f * 100:.0f} %")
+
         try:
-            ffmpeg_utils.convert_to_cfr(src, dst, fps_bruch)
+            ffmpeg_utils.convert_to_cfr(src, dst, fps_bruch,
+                                        dauer=info["dauer"], progress=_cb)
         except ffmpeg_utils.FfmpegError as exc:
             info["cfr_fehler"] = str(exc)[-300:]
             return info

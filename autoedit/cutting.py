@@ -331,6 +331,37 @@ def _trim_silence(project: str, segmente: list[dict]) -> None:
             seg["stille_getrimmt"] = True
 
 
+# ------------------------------------------------------------ Skript-Datei
+
+SKRIPT_ENDUNGEN = (".txt", ".md")
+
+
+def load_script_file(project: str) -> dict | None:
+    """Skript-Datei aus dem Projektordner einlesen (Wurzel oder input/).
+
+    Nimmt die erste .txt/.md-Datei (alphabetisch, 'skript*'/'script*'
+    bevorzugt). Rückgabe: {"datei": name, "text": inhalt} oder None.
+    """
+    base = paths.project_dir(project)
+    kandidaten: list[Path] = []
+    for folder in (base, base / "input"):
+        if folder.is_dir():
+            kandidaten += sorted(
+                f for f in folder.iterdir()
+                if f.is_file() and f.suffix.lower() in SKRIPT_ENDUNGEN
+                and not f.name.startswith(".")
+            )
+    if not kandidaten:
+        return None
+    kandidaten.sort(key=lambda f: (
+        not f.stem.lower().startswith(("skript", "script")), f.name.lower()))
+    f = kandidaten[0]
+    text = f.read_text(encoding="utf-8", errors="replace").strip()
+    if not text:
+        return None
+    return {"datei": f.name, "text": text}
+
+
 # ------------------------------------------------------------ Auswahl-Lauf
 
 def select_segments(project: str, modus: str = "auto", skript: str | None = None,
@@ -340,7 +371,15 @@ def select_segments(project: str, modus: str = "auto", skript: str | None = None
     if transcript is None:
         raise RuntimeError("Erst transkribieren (Phase 1).")
     if modus == "skript" and not (skript or "").strip():
-        raise ValueError("Skript-Modus gewählt, aber kein Skript angegeben.")
+        # Kein Skript im Eingabefeld: Skript-Datei aus dem Projektordner
+        datei = load_script_file(project)
+        if datei:
+            skript = datei["text"]
+        else:
+            raise ValueError(
+                "Skript-Modus gewählt, aber kein Skript angegeben – ins "
+                "Eingabefeld tippen oder eine skript.txt in den "
+                "Projektordner legen.")
 
     reel_laenge = float(cfg["reel_laenge_sek"])
     if client is None:

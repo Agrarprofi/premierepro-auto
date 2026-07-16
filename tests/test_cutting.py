@@ -304,3 +304,35 @@ def test_trim_silence_keeps_tight_segments(env, media):
 
     seg = cutting.load_segments(name)["segmente"][0]
     assert "stille_getrimmt" not in seg
+
+
+# ------------------------------------------------------------ Skript-Datei
+
+def test_load_script_file_and_fallback(projekt, fake_claude):
+    _prep(projekt)
+    base = paths.project_dir(projekt)
+
+    # ohne Datei und ohne Eingabe -> verständlicher Fehler
+    assert cutting.load_script_file(projekt) is None
+    with pytest.raises(ValueError, match="skript.txt"):
+        cutting.select_segments(projekt, modus="skript", skript="  ",
+                                client=fake_claude)
+
+    (base / "aaa_notizen.txt").write_text("nur Notizen", encoding="utf-8")
+    (base / "input" / "skript.txt").write_text(
+        "Fokus: Kartoffelernte und Bodengesundheit", encoding="utf-8")
+
+    # 'skript*' gewinnt gegen alphabetisch frühere Dateien
+    sd = cutting.load_script_file(projekt)
+    assert sd["datei"] == "skript.txt"
+    assert "Kartoffelernte" in sd["text"]
+
+    # Skript-Modus ohne Eingabefeld: Datei wird automatisch verwendet
+    cutting.select_segments(projekt, modus="skript", client=fake_claude)
+    assert "Kartoffelernte und Bodengesundheit" in \
+        fake_claude.prompts["reel_auswahl"]
+
+    # explizite Eingabe hat Vorrang vor der Datei
+    cutting.select_segments(projekt, modus="skript",
+                            skript="Nur der Traktor", client=fake_claude)
+    assert "Nur der Traktor" in fake_claude.prompts["reel_auswahl"]

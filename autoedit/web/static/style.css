@@ -67,10 +67,14 @@ video { max-width: 100%; margin-top: .5rem; border-radius: 4px; }
 .step button { padding: 0 .4rem; font-size: .75rem; }
 @keyframes pulse { 50% { opacity: .4; } }
 
-.job { font-size: .85rem; min-width: 220px; }
-.job .bar { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; }
-.job .bar > div { height: 100%; background: var(--accent); width: 0; transition: width .3s; }
+.job { font-size: .85rem; min-width: 260px; flex: 1; }
+.job .head { display: flex; gap: .5rem; align-items: baseline; }
+.job .pct { font-weight: 600; }
+.job .bar { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; margin: .25rem 0 .15rem; }
+.job .bar > div { height: 100%; background: var(--accent); width: 0; transition: width .5s; }
+.job .msg { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .job.fehler { color: var(--err); }
+.job.fehler .msg { white-space: normal; }
 
 .files { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: .6rem; font-size: .85rem; }
 .files h4 { margin: 0 0 .2rem; font-size: .85rem; }

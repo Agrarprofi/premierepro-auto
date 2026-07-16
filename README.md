@@ -46,7 +46,8 @@ Beim ersten Transkriptionslauf lädt WhisperX das `large-v3`-Modell
 ```
 projects/<projektname>/
 ├── config.yaml            # Reel-Länge, B-Roll-Dauer, Sprache, Musik, …
-├── input/
+├── skript.txt             # optional: Skript/Stichworte für den Schnitt
+├── input/                 #   (auch hier möglich; .txt oder .md)
 │   ├── cam_a/             # Hauptkamera (MP4/MOV)
 │   ├── cam_b/             # Zweite Kamera
 │   ├── audio_dji/         # DJI-Mic-WAV (beste Tonqualität, Sync-Referenz)
