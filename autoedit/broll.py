@@ -167,13 +167,23 @@ def match_broll(project: str, progress=None, client=None) -> dict:
         f"bester Einstieg {c['beste_einstiegszeit']:.1f} s)"
         for c in index["clips"]
     )
+    joins = [t for t in cutting.take_joins(project) if t >= HOOK_SPERRE_SEC]
+    joins_regel = ""
+    if joins:
+        zeiten = ", ".join(f"{t:.1f} s" for t in joins)
+        joins_regel = (
+            f"- WICHTIG: Bei {zeiten} liegen Take-Übergänge (Jump-Cuts auf "
+            "derselben Kamera). Platziere dort bevorzugt eine B-Roll, deren "
+            "Einblendung den Zeitpunkt überlappt (Start ca. 0.5–1 s davor), "
+            "um den Schnitt zu verdecken.\n"
+        )
     prompt = (
         "Ordne passenden Stellen im Reel-Transkript B-Roll-Clips zu.\n"
         "Regeln:\n"
         f"- nie über die ersten {HOOK_SPERRE_SEC:.0f} Sekunden des Reels "
         "(der Hook bleibt Talking Head)\n"
         f"- jede Einblendung dauert {broll_dauer:.1f} Sekunden\n"
-        + anzahl_regel +
+        + anzahl_regel + joins_regel +
         f"- mindestens {min_abstand:.1f} Sekunden Abstand zwischen zwei "
         "Einblendungen (nie zwei B-Rolls direkt hintereinander)\n"
         "- 'transkript_zeit' ist der Startzeitpunkt der Einblendung auf der "

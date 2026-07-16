@@ -78,22 +78,28 @@ def annotate_transcript(transcript: dict) -> str:
         info = takes.get(i)
         if info is not None:
             if info["final"]:
-                marker = "  ⟳ finaler Take dieser Aussage (den verwenden)"
+                marker = "  ⟳ letzter Take dieser Aussage"
             else:
                 letzte = max(j for j, t in takes.items()
                              if t["gruppe"] == info["gruppe"])
-                marker = (f"  ⟳ erster Anlauf – wird bei "
-                          f"[{segmente[letzte]['start']:.2f}] sauber wiederholt")
+                marker = (f"  ⟳ weiterer Anlauf derselben Aussage folgt bei "
+                          f"[{segmente[letzte]['start']:.2f}]")
         lines.append(f"[{s['start']:.2f} – {s['end']:.2f}] {s['text']}{marker}")
     return "\n".join(lines)
 
 
 _ROHMATERIAL_REGELN = (
     "Das Transkript ist ROHMATERIAL: Es enthält Sprechpausen (⏸), "
-    "Versprecher und wiederholte Anläufe (⟳). Regeln dafür:\n"
+    "Versprecher und wiederholte Anläufe/Takes (⟳). Regeln dafür:\n"
     "- Wenn eine Aussage mehrfach vorkommt (die Person setzt nach einer "
-    "Pause neu an und sagt den Satz noch einmal), verwende AUSSCHLIESSLICH "
-    "den letzten, sauberen Take – nie den ersten Anlauf.\n"
+    "Pause neu an), wähle den SAUBERSTEN Take – meistens ist das der "
+    "letzte, aber entscheide nach Qualität und Inhalt. Ein und derselbe "
+    "Inhalt darf nie doppelt im Reel landen.\n"
+    "- Takes dürfen KOMBINIERT werden: z.B. erste Satzhälfte aus Take 1, "
+    "zweite aus Take 2, wenn der Übergang an einer Wortgrenze liegt und "
+    "zusammen ein flüssiger, grammatikalisch sauberer Satz entsteht. Gib "
+    "die Teile dann als aufeinanderfolgende Segmente aus und setze beim "
+    'zweiten Teil "fortsetzung": true.\n'
     "- Meide Passagen mit Versprechern, Satzabbrüchen oder Füllwort-Ketten.\n"
 )
 
@@ -201,9 +207,16 @@ def _prompt_auto(transcript: dict, reel_laenge: float, cfg: dict,
         + _statements_block(statements)
         + _hinweise_block(cfg) +
         f"\nTranskript (Zeiten in Sekunden):\n{annotate_transcript(transcript)}\n\n"
-        'Antworte NUR als JSON-Array: '
-        '[{"start": <sek>, "ende": <sek>, "text": "...", "begruendung": "..."}]'
+        + _AUSGABE_FORMAT
     )
+
+
+_AUSGABE_FORMAT = (
+    'Antworte NUR als JSON-Array: [{"start": <sek>, "ende": <sek>, '
+    '"text": "...", "begruendung": "...", "fortsetzung": <true, wenn dieses '
+    "Segment den Satz des vorherigen Segments direkt fortsetzt "
+    "(Take-Kombination), sonst false>}]"
+)
 
 
 def _prompt_script(transcript: dict, skript: str, reel_laenge: float,
@@ -219,8 +232,7 @@ def _prompt_script(transcript: dict, skript: str, reel_laenge: float,
         + _statements_block(statements)
         + _hinweise_block(cfg) +
         f"\nTranskript (Zeiten in Sekunden):\n{annotate_transcript(transcript)}\n\n"
-        'Antworte NUR als JSON-Array: '
-        '[{"start": <sek>, "ende": <sek>, "text": "...", "begruendung": "..."}]'
+        + _AUSGABE_FORMAT
     )
 
 
@@ -297,11 +309,25 @@ def select_segments(project: str, modus: str = "auto", skript: str | None = None
             "dauer": round(e - s, 3),
             "text": text,
             "begruendung": str(item.get("begruendung", "")),
+            "fortsetzung": bool(item.get("fortsetzung", False)),
             "aktiv": True,
         })
 
     if not segmente:
         raise RuntimeError("Claude hat keine verwertbaren Segmente geliefert.")
+
+    # Take-Kombination: an der Nahtstelle das Padding entfernen, damit der
+    # zusammengesetzte Satz ohne doppelten Atmer/Pause fließt.
+    for i, seg in enumerate(segmente):
+        if i == 0 or not seg["fortsetzung"]:
+            continue
+        prev = segmente[i - 1]
+        if prev["ende"] - prev["start"] > 2 * PADDING_SEC:
+            prev["ende"] = round(prev["ende"] - PADDING_SEC, 3)
+            prev["dauer"] = round(prev["ende"] - prev["start"], 3)
+        if seg["ende"] - seg["start"] > 2 * PADDING_SEC:
+            seg["start"] = round(seg["start"] + PADDING_SEC, 3)
+            seg["dauer"] = round(seg["ende"] - seg["start"], 3)
 
     result = {
         "projekt": project,
@@ -372,6 +398,14 @@ def enabled_segments(project: str) -> list[dict]:
 def reel_dauer(project: str) -> float:
     segs = enabled_segments(project)
     return segs[-1]["timeline_ende"] if segs else 0.0
+
+
+def take_joins(project: str) -> list[float]:
+    """Reel-Zeitpunkte, an denen zwei Takes zusammengeschnitten sind
+    (Jump-Cut auf derselben Kamera) – Kandidaten für B-Roll-Abdeckung."""
+    segs = enabled_segments(project)
+    return [seg["timeline_start"] for i, seg in enumerate(segs)
+            if i > 0 and seg.get("fortsetzung")]
 
 
 # ------------------------------------------------------------ Vorschau

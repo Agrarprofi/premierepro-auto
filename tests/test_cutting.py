@@ -115,8 +115,8 @@ def test_annotate_transcript_markers():
     ]}
     text = cutting.annotate_transcript(transcript)
     assert "⏸ Sprechpause 4.0 s" in text
-    assert "⟳ erster Anlauf" in text
-    assert "⟳ finaler Take" in text
+    assert "⟳ weiterer Anlauf" in text
+    assert "⟳ letzter Take" in text
 
 
 def test_analyze_statements(projekt, fake_claude):
@@ -131,7 +131,7 @@ def test_analyze_statements(projekt, fake_claude):
     gespeichert = cutting.load_statements(projekt)
     assert gespeichert["aussagen"] == aussagen
     # Analyse-Prompt enthält die Rohmaterial-Regeln
-    assert "AUSSCHLIESSLICH" in fake_claude.prompts["aussagen_analyse"]
+    assert "SAUBERSTEN Take" in fake_claude.prompts["aussagen_analyse"]
 
 
 def test_select_segments_uses_analysis_and_hints(projekt, fake_claude):
@@ -146,7 +146,7 @@ def test_select_segments_uses_analysis_and_hints(projekt, fake_claude):
         fake_claude.calls.index("reel_auswahl")
     prompt = fake_claude.prompts["reel_auswahl"]
     assert "Vorab-Analyse der stärksten Aussagen" in prompt
-    assert "AUSSCHLIESSLICH" in prompt          # Take-Regel
+    assert "SAUBERSTEN Take" in prompt          # Take-Regel
     assert "Fokus auf Bodengesundheit" in prompt  # Nutzer-Hinweise
     assert cutting.load_statements(projekt) is not None
 
@@ -155,3 +155,58 @@ def test_select_segments_without_analysis(projekt, fake_claude):
     _prep(projekt)
     cutting.select_segments(projekt, client=fake_claude, analyse=False)
     assert "aussagen_analyse" not in fake_claude.calls
+
+
+def _take_kombi_fake():
+    from tests.conftest import FakeClaude
+    return FakeClaude(reel_segments=[
+        {"start": 5.5, "ende": 10.0, "text": "Teil 1", "begruendung": "",
+         "fortsetzung": False},
+        {"start": 15.0, "ende": 18.0, "text": "Teil 2 aus anderem Take",
+         "begruendung": "Satzende sauberer", "fortsetzung": True},
+    ])
+
+
+def test_take_combination_tightens_join(projekt):
+    """Zwei Takes verschnitten (fortsetzung=true): an der Naht wird das
+    Padding entfernt, die Grenzen liegen exakt auf Wortgrenzen."""
+    fake = _take_kombi_fake()
+    _prep(projekt)
+    cutting.select_segments(projekt, client=fake)
+    s1, s2 = cutting.load_segments(projekt)["segmente"]
+    assert s2["fortsetzung"] is True
+
+    transcript = transcribe.load_transcript(projekt)
+    word_starts = {w["start"] for w in transcript["woerter"]}
+    word_ends = {w["end"] for w in transcript["woerter"]}
+    # Nahtstelle ohne Padding: exakt auf Wortgrenzen
+    assert s1["ende"] in word_ends
+    assert s2["start"] in word_starts
+    # Normale Kanten behalten ihr Padding (liegen NICHT auf der Wortgrenze)
+    assert s1["start"] not in word_starts
+    assert s2["ende"] not in word_ends
+
+    # Take-Übergang liegt am Timeline-Start des zweiten Teils
+    joins = cutting.take_joins(projekt)
+    assert len(joins) == 1
+    assert joins[0] == pytest.approx(s1["dauer"], abs=0.01)
+
+
+def test_prompt_allows_take_combination(projekt, fake_claude):
+    _prep(projekt)
+    cutting.select_segments(projekt, client=fake_claude)
+    prompt = fake_claude.prompts["reel_auswahl"]
+    assert "KOMBINIERT" in prompt
+    assert '"fortsetzung"' in prompt
+    assert "SAUBERSTEN Take" in prompt
+
+
+def test_broll_prompt_covers_take_joins(projekt):
+    from autoedit import broll
+    from tests.conftest import prepared_project
+
+    fake = _take_kombi_fake()
+    prepared_project(projekt, fake, with_broll=True)
+    prompt = fake.prompts["broll_matching"]
+    assert "Take-Übergänge" in prompt
+    assert "verdecken" in prompt

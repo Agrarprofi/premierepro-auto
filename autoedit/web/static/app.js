@@ -175,10 +175,13 @@ function renderSegments() {
   data.segmente.forEach((seg, i) => {
     const div = document.createElement("div");
     div.className = "segment" + (seg.aktiv ? "" : " inactive");
+    const takeJoin = seg.fortsetzung
+      ? '<b>⟂ Take-Kombination:</b> setzt das vorherige Segment mitten im Satz fort · '
+      : "";
     div.innerHTML = `
       <input type="checkbox" ${seg.aktiv ? "checked" : ""} title="Segment verwenden">
       <div class="text">${seg.text}
-        <div class="meta">${seg.start.toFixed(2)}–${seg.ende.toFixed(2)} s
+        <div class="meta">${takeJoin}${seg.start.toFixed(2)}–${seg.ende.toFixed(2)} s
           (${fmtSec(seg.dauer)}) – ${seg.begruendung || ""}</div>
       </div>
       <button class="up" title="nach oben">↑</button>
