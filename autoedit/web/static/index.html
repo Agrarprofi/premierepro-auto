@@ -76,6 +76,13 @@
       <label class="check"><input type="checkbox" name="musik_aktiv"> Musik</label>
       <label class="check"><input type="checkbox" name="untertitel_aktiv"> Untertitel</label>
       <label>Claude-Modell <input name="claude_modell"></label>
+      <label title="large-v3-turbo ist ~4x schneller bei fast gleicher Qualität">
+        Whisper-Modell
+        <select name="whisper_modell">
+          <option value="large-v3">large-v3 (beste Qualität)</option>
+          <option value="large-v3-turbo">large-v3-turbo (~4x schneller)</option>
+        </select>
+      </label>
       <label style="grid-column: 1 / -1">Hinweise an den Editor (optional,
         z.B. „Fokus auf Bodengesundheit, Du-Form vermeiden“)
         <textarea name="schnitt_hinweise" rows="2"></textarea></label>

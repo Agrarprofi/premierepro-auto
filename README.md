@@ -90,7 +90,20 @@ musik_aktiv: false
 untertitel_aktiv: true
 export_format: quelle      # oder "9:16" (1080×1920, Clips zentriert skaliert)
 claude_modell: claude-sonnet-4-6
+whisper_modell: large-v3   # "large-v3-turbo" = ~4x schnellere Transkription
 ```
+
+## Performance (Apple Silicon)
+
+Alles außer den Claude-API-Aufrufen läuft lokal. Die zwei schweren
+lokalen Schritte nutzen die Hardware voll aus:
+
+- **Transkription**: läuft auf allen CPU-Kernen (CTranslate2/int8).
+  `whisper_modell: large-v3-turbo` transkribiert ~4x schneller bei fast
+  gleicher Qualität – fürs Interview-Deutsch meist völlig ausreichend.
+- **CFR-Wandlung**: kodiert und dekodiert über die Video-Hardware
+  (VideoToolbox) und wandelt mehrere Dateien parallel. Läuft pro Datei
+  nur einmal (Cache).
 
 ## Warteschlange (Nacht-Modus)
 

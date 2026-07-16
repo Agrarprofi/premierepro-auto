@@ -47,22 +47,22 @@ def scan_project(project: str, progress=None) -> dict:
     erzwungen = {c["relpfad"] for c in vorher.get("clips", [])
                  if c.get("cfr_erzwungen")}
 
-    clips = []
+    clips: list[dict] = []
+    zu_wandeln: list[int] = []
     for i, (role, f) in enumerate(all_files):
         if progress:
-            progress(i / max(1, len(all_files)), f"Analysiere {f.name}")
+            progress(0.4 * i / max(1, len(all_files)), f"Analysiere {f.name}")
         info = ffmpeg_utils.media_info(f)
         info["rolle"] = role
         info["name"] = f.name
         info["relpfad"] = str(f.relative_to(paths.project_dir(project)))
+        clips.append(info)
         if role in CFR_ROLLEN and (info.get("vfr_verdacht")
                                    or info["relpfad"] in erzwungen):
-            n = max(1, len(all_files))
-            info = _ensure_cfr(project, f, info, progress=progress,
-                               frac0=i / n, frac1=(i + 1) / n)
-            if info["relpfad"] in erzwungen:
-                info["cfr_erzwungen"] = True
-        clips.append(info)
+            zu_wandeln.append(i)
+
+    if zu_wandeln:
+        _convert_all_cfr(project, clips, zu_wandeln, erzwungen, progress)
 
     result = {"projekt": project, "clips": clips}
     out = paths.output_dir(project)
@@ -71,6 +71,51 @@ def scan_project(project: str, progress=None) -> dict:
         json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8"
     )
     return result
+
+
+def _convert_all_cfr(project: str, clips: list[dict], indizes: list[int],
+                     erzwungen: set[str], progress=None) -> None:
+    """Alle nötigen CFR-Wandlungen PARALLEL ausführen (mehrere ffmpeg-
+    Prozesse; auf dem Mac teilen sich die Hardware-Encoder-Engines die
+    Arbeit). Gesamtfortschritt gewichtet nach Dateidauer."""
+    import os
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    workers = min(3, max(1, (os.cpu_count() or 4) // 4), len(indizes))
+    gesamt = sum(float(clips[i]["dauer"] or 0.0) for i in indizes) or 1.0
+    stand = {i: 0.0 for i in indizes}
+    fertig = [0]
+    lock = threading.Lock()
+
+    def melde(i: int, frac: float, text: str) -> None:
+        if not progress:
+            return
+        with lock:
+            stand[i] = frac * float(clips[i]["dauer"] or 0.0)
+            done = sum(stand.values())
+            n_fertig = fertig[0]
+        progress(0.4 + 0.6 * done / gesamt,
+                 f"CFR-Wandlung ({n_fertig}/{len(indizes)} fertig): {text}")
+
+    def wandle(i: int) -> None:
+        info = clips[i]
+        src = paths.project_dir(project) / info["relpfad"]
+
+        def sub(frac: float, meldung: str = "", _i=i) -> None:
+            melde(_i, frac, meldung)
+
+        neu = _ensure_cfr(project, src, info, progress=sub)
+        if info["relpfad"] in erzwungen:
+            neu["cfr_erzwungen"] = True
+        with lock:
+            fertig[0] += 1
+        clips[i] = neu
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(wandle, i) for i in indizes]
+        for fu in futures:
+            fu.result()  # Fehler/Abbruch weiterreichen
 
 
 def _ensure_cfr(project: str, src: Path, info: dict, progress=None,

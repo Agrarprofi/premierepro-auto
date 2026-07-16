@@ -31,8 +31,11 @@ def pick_audio_source(project: str) -> tuple[Path, str]:
     )
 
 
-def run_whisperx(wav_path: Path, language: str, progress=None) -> list[dict]:
+def run_whisperx(wav_path: Path, language: str, progress=None,
+                 modell: str = WHISPER_MODEL) -> list[dict]:
     """WhisperX ausführen; gibt Wortliste [{word, start, end}] zurück."""
+    import os
+
     import whisperx  # lazy: großes Paket, nur bei echter Transkription nötig
 
     device = "cpu"
@@ -47,13 +50,20 @@ def run_whisperx(wav_path: Path, language: str, progress=None) -> list[dict]:
         pass
 
     if progress:
-        progress(0.05, f"Lade WhisperX-Modell {WHISPER_MODEL} ({device}/{compute_type})")
-    model = whisperx.load_model(WHISPER_MODEL, device, compute_type=compute_type)
+        progress(0.05, f"Lade WhisperX-Modell {modell} ({device}/{compute_type})")
+    # Auf Apple Silicon läuft CTranslate2 auf der CPU - dann alle Kerne
+    # nutzen (Standard wären nur 4).
+    threads = max(4, (os.cpu_count() or 8) - 2)
+    try:
+        model = whisperx.load_model(modell, device, compute_type=compute_type,
+                                    threads=threads)
+    except TypeError:  # ältere whisperx-Version ohne threads-Parameter
+        model = whisperx.load_model(modell, device, compute_type=compute_type)
     audio = whisperx.load_audio(str(wav_path))
 
     if progress:
-        progress(0.2, "Transkribiere …")
-    result = model.transcribe(audio, language=language, batch_size=8)
+        progress(0.2, f"Transkribiere ({threads} Threads) …")
+    result = model.transcribe(audio, language=language, batch_size=16)
 
     if progress:
         progress(0.7, "Wort-Alignment …")
@@ -115,8 +125,12 @@ def transcribe_project(project: str, progress=None, transcriber=None) -> dict:
         progress(0.02, f"Extrahiere Audio aus {source.name}")
     ffmpeg_utils.extract_audio_wav(source, tmp_wav)
 
-    runner = transcriber or run_whisperx
-    words = runner(tmp_wav, cfg["sprache"], progress=progress)
+    modell = str(cfg.get("whisper_modell") or WHISPER_MODEL)
+    if transcriber is not None:
+        words = transcriber(tmp_wav, cfg["sprache"], progress=progress)
+    else:
+        words = run_whisperx(tmp_wav, cfg["sprache"], progress=progress,
+                             modell=modell)
     words = [w for w in words if w["word"]]
     segments = _words_to_segments(words)
 
@@ -125,7 +139,7 @@ def transcribe_project(project: str, progress=None, transcriber=None) -> dict:
         "sprache": cfg["sprache"],
         "quelle": str(source),
         "quelle_rolle": source_role,
-        "modell": WHISPER_MODEL,
+        "modell": modell,
         "woerter": words,
         "segmente": segments,
     }

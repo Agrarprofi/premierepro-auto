@@ -30,6 +30,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "export_format": "quelle",
     # Claude-Modell für Schnitt/B-Roll/Untertitel/Musik
     "claude_modell": "claude-sonnet-4-6",
+    # WhisperX-Modell; "large-v3-turbo" ist ~4x schneller bei fast
+    # gleicher Qualität (braucht aktuelles whisperx/faster-whisper)
+    "whisper_modell": "large-v3",
 }
 
 CONFIG_FILENAME = "config.yaml"
@@ -83,6 +86,9 @@ def _validate(cfg: dict[str, Any]) -> None:
     for key in ("musik_aktiv", "untertitel_aktiv"):
         if not isinstance(cfg[key], bool):
             raise ValueError(f"{key} muss true/false sein")
+    for key in ("claude_modell", "whisper_modell"):
+        if not isinstance(cfg[key], str) or not cfg[key].strip():
+            raise ValueError(f"{key} darf nicht leer sein")
 
 
 # ---------------------------------------------------------------- Presets

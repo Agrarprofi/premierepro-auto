@@ -162,9 +162,13 @@ def convert_to_cfr(src: Path | str, dst: Path | str, fps_bruch: str,
     src, dst = Path(src), Path(dst)
     dst.parent.mkdir(parents=True, exist_ok=True)
     tmp = dst.with_name(dst.stem + ".tmp" + dst.suffix)
+    # Auf dem Mac auch das DEKODIEREN in Hardware - bei 4K-HEVC ist sonst
+    # der Decoder der Flaschenhals, nicht der Encoder.
+    hwaccel = (["-hwaccel", "videotoolbox"]
+               if _video_encoder() == "h264_videotoolbox" else [])
     try:
         run_ffmpeg_progress([
-            "-y", "-v", "error", "-i", str(src),
+            "-y", "-v", "error", *hwaccel, "-i", str(src),
             "-vf", f"fps={fps_bruch}",
             *_encoder_args(breite, hoehe, fps),
             "-c:a", "copy",

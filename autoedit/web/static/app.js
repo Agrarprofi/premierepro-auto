@@ -538,6 +538,7 @@ function bindProjectEvents() {
       musik_aktiv: form.elements.musik_aktiv.checked,
       untertitel_aktiv: form.elements.untertitel_aktiv.checked,
       claude_modell: form.elements.claude_modell.value,
+      whisper_modell: form.elements.whisper_modell.value,
       schnitt_hinweise: form.elements.schnitt_hinweise.value,
     };
     try {

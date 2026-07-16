@@ -121,3 +121,22 @@ def test_force_cfr_survives_rescan(projekt, media):
 
     with pytest.raises(KeyError):
         ingest.force_cfr(projekt, "input/cam_b/gibtsnicht.mp4")
+
+
+def test_scan_converts_multiple_vfr_parallel(projekt, media):
+    """Mehrere VFR-Dateien werden in EINEM Scan (parallel) gewandelt;
+    der Gesamtfortschritt bleibt monoton in [0, 1]."""
+    from tests.conftest import make_vfr
+
+    broll_dir = paths.input_dir(projekt, "broll")
+    make_vfr(media["root"] / "broll_traktor.mp4", broll_dir / "vfr_1.mp4")
+    make_vfr(media["root"] / "broll_feld.mp4", broll_dir / "vfr_2.mp4")
+
+    calls = []
+    result = ingest.scan_project(
+        projekt, progress=lambda f, m="": calls.append(f))
+    by_name = {c["name"]: c for c in result["clips"]}
+    for name in ("vfr_1.mp4", "vfr_2.mp4"):
+        assert by_name[name].get("cfr_pfad"), name
+        assert ingest.clip_datei(projekt, by_name[name]).is_file()
+    assert all(0.0 <= f <= 1.0 for f in calls)
