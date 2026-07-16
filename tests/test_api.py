@@ -167,3 +167,34 @@ def test_overview_includes_script_file(client, projekt):
     ov = client.get(f"/api/projects/{projekt}/overview").json()
     assert ov["skript_datei"]["datei"] == "skript.txt"
     assert ov["skript_datei"]["text"] == "Mein Reel-Skript"
+
+
+def test_batch_api_validation(client, projekt):
+    res = client.post("/api/batch", json={"projekte": []})
+    assert res.status_code == 400
+    res = client.post("/api/batch", json={"projekte": ["gibtsnicht"]})
+    assert res.status_code == 404
+    assert client.get("/api/batch/running").json()["job"] is None
+
+
+def test_batch_blocks_parallel_jobs(client, projekt):
+    import threading
+
+    from autoedit import jobs
+
+    ev = threading.Event()
+    jobs.MANAGER.start("batch:run_all", lambda p: ev.wait(5))
+    try:
+        # Einzelschritt während der Warteschlange -> 409
+        res = client.post(f"/api/projects/{projekt}/steps/ingest", json={})
+        assert res.status_code == 409
+        # zweite Warteschlange -> 409
+        res = client.post("/api/batch", json={"projekte": [projekt]})
+        assert res.status_code == 409
+        assert client.get("/api/batch/running").json()["job"] is not None
+    finally:
+        ev.set()
+        for _ in range(100):
+            if jobs.MANAGER.running_any() is None:
+                break
+            time.sleep(0.05)

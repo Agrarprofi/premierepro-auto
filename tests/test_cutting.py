@@ -355,3 +355,100 @@ def test_script_prompt_is_leitfaden_not_stur(projekt, fake_claude):
     assert "Bodengesundheit zuerst" in prompt
     # Aussagen-Analyse lief auch im Skript-Modus
     assert "aussagen_analyse" in fake_claude.calls
+
+
+# ------------------------------------------------------------ Pausen-Schnitt
+
+def test_find_pauses():
+    import numpy as np
+
+    sr = 16000
+    rng = np.random.default_rng(6)
+    wav = rng.standard_normal(sr * 12).astype(np.float32) * 0.3
+    wav[int(4.0 * sr):int(6.0 * sr)] = 0.0     # 2 s Pause mitten drin
+
+    pausen = cutting.find_pauses(wav, sr, 0.0, 12.0, min_pause=1.0)
+    assert len(pausen) == 1
+    assert pausen[0][0] == pytest.approx(4.0, abs=0.1)
+    assert pausen[0][1] == pytest.approx(6.0, abs=0.1)
+    # kürzere Mindestdauer als die Pause -> gleiche Fundstelle,
+    # höhere Mindestdauer -> nichts
+    assert cutting.find_pauses(wav, sr, 0.0, 12.0, min_pause=3.0) == []
+    # Rand-Stille zählt nicht als Innen-Pause
+    wav2 = np.zeros(sr * 10, dtype=np.float32)
+    wav2[int(3.0 * sr):] = rng.standard_normal(sr * 7).astype(np.float32) * 0.3
+    assert cutting.find_pauses(wav2, sr, 0.0, 10.0, min_pause=1.0) == []
+
+
+def test_split_pauses_cuts_thinking_break(env, media):
+    """Sprache 2-6 s, Denkpause 6-9 s, Sprache 9-13 s: das Segment wird an
+    der Pause geteilt, die Pause fliegt raus, Teil 2 wird fortsetzung
+    (Jump-Cut-Kandidat für B-Roll)."""
+    import numpy as np
+    from scipy.io import wavfile
+
+    name = "pausen"
+    paths.create_project(name)
+    base = paths.project_dir(name)
+    sr = 16000
+    rng = np.random.default_rng(5)
+    wav = np.zeros(sr * 20, dtype=np.float32)
+    wav[2 * sr:6 * sr] = rng.standard_normal(4 * sr).astype(np.float32) * 0.4
+    wav[9 * sr:13 * sr] = rng.standard_normal(4 * sr).astype(np.float32) * 0.4
+    wavfile.write(base / "input/audio_dji/dji.wav", sr,
+                  (np.clip(wav, -0.99, 0.99) * 32767).astype(np.int16))
+
+    def words_all(wav_path, language, progress=None):
+        return [{"word": f"w{i}", "start": round(2.2 + 0.4 * i, 3),
+                 "end": round(2.5 + 0.4 * i, 3)} for i in range(26)]
+
+    ingest.scan_project(name)
+    transcribe.transcribe_project(name, transcriber=words_all)
+    fake = FakeClaude(reel_segments=[
+        {"start": 2.2, "ende": 12.8, "text": "x", "begruendung": ""}])
+    cutting.select_segments(name, client=fake)
+
+    segs = cutting.load_segments(name)["segmente"]
+    assert len(segs) == 2
+    s1, s2 = segs
+    # Teil 1 endet kurz nach dem letzten Laut vor der Pause (~6 s)
+    assert 5.8 < s1["ende"] < 6.5
+    # Teil 2 beginnt kurz vor dem ersten Laut nach der Pause (~9 s)
+    assert 8.5 < s2["start"] < 9.1
+    assert s2["fortsetzung"] is True
+    assert s2["pause_entfernt"] is True
+    # Jump-Cut taucht als Take-Übergang auf (B-Roll-Kandidat)
+    joins = cutting.take_joins(name)
+    assert len(joins) == 1
+    assert joins[0] == pytest.approx(s1["dauer"], abs=0.01)
+
+
+def test_split_pauses_disabled(env, media):
+    """pausen_schnitt_sek = 0 schaltet den Pausen-Schnitt ab."""
+    import numpy as np
+    from scipy.io import wavfile
+
+    from autoedit import config
+
+    name = "pausen-aus"
+    paths.create_project(name)
+    base = paths.project_dir(name)
+    sr = 16000
+    rng = np.random.default_rng(5)
+    wav = np.zeros(sr * 20, dtype=np.float32)
+    wav[2 * sr:6 * sr] = rng.standard_normal(4 * sr).astype(np.float32) * 0.4
+    wav[9 * sr:13 * sr] = rng.standard_normal(4 * sr).astype(np.float32) * 0.4
+    wavfile.write(base / "input/audio_dji/dji.wav", sr,
+                  (np.clip(wav, -0.99, 0.99) * 32767).astype(np.int16))
+    config.save_config(name, {"pausen_schnitt_sek": 0})
+
+    def words_all(wav_path, language, progress=None):
+        return [{"word": f"w{i}", "start": round(2.2 + 0.4 * i, 3),
+                 "end": round(2.5 + 0.4 * i, 3)} for i in range(26)]
+
+    ingest.scan_project(name)
+    transcribe.transcribe_project(name, transcriber=words_all)
+    fake = FakeClaude(reel_segments=[
+        {"start": 2.2, "ende": 12.8, "text": "x", "begruendung": ""}])
+    cutting.select_segments(name, client=fake)
+    assert len(cutting.load_segments(name)["segmente"]) == 1

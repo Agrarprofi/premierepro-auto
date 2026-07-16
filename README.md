@@ -84,12 +84,24 @@ broll_dauer_sek: 2.0       # Länge jeder B-Roll-Einblendung
 broll_ziel_anzahl: 0       # 0 = automatisch (max. 40%); z.B. 15 Schnittbilder
 broll_min_abstand_sek: 1.0 # Mindestabstand zwischen zwei B-Rolls
 sprache: de
+pausen_schnitt_sek: 1.0    # Innen-Pausen ab dieser Länge rausschneiden (0 = aus)
 schnitt_hinweise: ""       # Freitext-Vorgaben für die Reel-Auswahl
 musik_aktiv: false
 untertitel_aktiv: true
 export_format: quelle      # oder "9:16" (1080×1920, Clips zentriert skaliert)
 claude_modell: claude-sonnet-4-6
 ```
+
+## Warteschlange (Nacht-Modus)
+
+Mehrere Projekte vorbereiten (Dateien in die input-Ordner, optional
+`skript.txt` daneben), in der Seitenleiste ankreuzen und **„🌙 Nacheinander
+abarbeiten"** klicken: Jedes Projekt läuft komplett durch (bereits grüne
+Schritte werden übersprungen), ein Fehler in einem Projekt stoppt die
+anderen nicht – Details stehen im Log des jeweiligen Projekts. Auf macOS
+hält `caffeinate` den Rechner wach, solange die Warteschlange läuft
+(Deckel trotzdem offen lassen bzw. Netzteil anstecken). Morgens liegen
+die fertigen XMLs in den Output-Ordnern.
 
 ## Reel-Auswahl (zweistufig)
 

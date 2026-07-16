@@ -23,6 +23,7 @@ PADDING_SEC = 0.15
 STILLE_TOLERANZ = 0.35   # ab so viel führender/folgender Stille wird gestutzt
 STILLE_MAX_TRIM = 10.0   # maximal so viel wegschneiden
 STILLE_NACHLAUF = 0.25   # Luft nach dem letzten gesprochenen Laut
+PAUSE_MIN_TEIL_SEC = 0.8  # Mindestlänge der Teilstücke beim Pausen-Schnitt
 PAUSE_MARKER_SEC = 1.5   # ab dieser Sprechpause wird sie im Prompt markiert
 TAKE_FENSTER = 4         # wie viele Folgepassagen auf Wiederholung geprüft werden
 TAKE_AEHNLICHKEIT = 0.7  # Token-Überlappung, ab der zwei Passagen als Takes gelten
@@ -345,6 +346,89 @@ def _trim_silence(project: str, segmente: list[dict]) -> None:
             seg["stille_getrimmt"] = True
 
 
+def find_pauses(wav, sr: int, von: float, bis: float,
+                min_pause: float) -> list[tuple[float, float]]:
+    """Sprechpausen (start, ende) INNERHALB von [von, bis], die mindestens
+    min_pause Sekunden dauern - am echten Audio gemessen.
+
+    Läufe, die direkt am Fensteranfang beginnen oder am Fensterende noch
+    offen sind, zählen nicht (Rand-Stille erledigt der Stille-Trimmer).
+    """
+    import numpy as np
+
+    a, b = max(0, int(von * sr)), min(len(wav), int(bis * sr))
+    seg = wav[a:b]
+    frame = int(0.02 * sr)
+    n = len(seg) // frame
+    if n < 3:
+        return []
+    env = np.abs(seg[: n * frame]).reshape(n, frame).mean(axis=1)
+    peak = float(np.percentile(env, 95))
+    if peak <= 1e-5:
+        return []
+    still = env <= 0.12 * peak
+    pausen: list[tuple[float, float]] = []
+    start: int | None = None
+    for i, s in enumerate(still):
+        if s and start is None:
+            start = i
+        elif not s and start is not None:
+            if start > 0 and (i - start) * frame / sr >= min_pause:
+                pausen.append((von + start * frame / sr,
+                               von + i * frame / sr))
+            start = None
+    return pausen
+
+
+def _split_pauses(project: str, segmente: list[dict], words: list[dict],
+                  min_pause: float) -> list[dict]:
+    """Lange Sprechpausen INNERHALB eines Segments rausschneiden.
+
+    Das Segment wird an der Pause geteilt; das zweite Teilstück wird als
+    fortsetzung markiert, damit der Jump-Cut (gleiche Kamera, Position
+    springt) im B-Roll-Matching als Kandidat zum Verdecken auftaucht.
+    min_pause <= 0 schaltet den Pausen-Schnitt ab.
+    """
+    if min_pause <= 0:
+        return segmente
+    try:
+        ref_file, _ = sync_audio.reference_source(project)
+        wav = sync_audio._load_wav_mono(sync_audio._tmp_wav(project, ref_file))
+    except Exception:  # noqa: BLE001 - Pausen-Schnitt ist Kür, kein Muss
+        return segmente
+    sr = sync_audio.SYNC_SR
+
+    ergebnis: list[dict] = []
+    for seg in segmente:
+        pausen = find_pauses(wav, sr, seg["start"], seg["ende"], min_pause)
+        teile: list[tuple[float, float]] = []
+        cursor = seg["start"]
+        for p_start, p_ende in pausen:
+            teile.append((cursor, p_start + STILLE_NACHLAUF))
+            cursor = max(cursor, p_ende - PADDING_SEC)
+        teile.append((cursor, seg["ende"]))
+        # Winzige Teilstücke (einzelner Füller zwischen zwei Pausen) fliegen
+        # mit der Pause raus.
+        gueltig = [(s, e) for s, e in teile if e - s >= PAUSE_MIN_TEIL_SEC]
+        if len(gueltig) <= 1:
+            ergebnis.append(seg)
+            continue
+        for j, (s, e) in enumerate(gueltig):
+            teil_words = words_in_range(words, s, e)
+            neu = dict(seg)
+            neu.update({
+                "id": seg["id"] if j == 0 else uuid.uuid4().hex[:8],
+                "start": round(s, 3),
+                "ende": round(e, 3),
+                "dauer": round(e - s, 3),
+                "text": " ".join(w["word"] for w in teil_words) or seg["text"],
+                "fortsetzung": bool(seg.get("fortsetzung")) if j == 0 else True,
+                "pause_entfernt": j > 0,
+            })
+            ergebnis.append(neu)
+    return ergebnis
+
+
 # ------------------------------------------------------------ Skript-Datei
 
 SKRIPT_ENDUNGEN = (".txt", ".md")
@@ -384,12 +468,14 @@ def select_segments(project: str, modus: str = "auto", skript: str | None = None
     transcript = transcribe.load_transcript(project)
     if transcript is None:
         raise RuntimeError("Erst transkribieren (Phase 1).")
-    if modus == "skript" and not (skript or "").strip():
-        # Kein Skript im Eingabefeld: Skript-Datei aus dem Projektordner
+    if not (skript or "").strip():
+        # Kein Skript übergeben: Skript-Datei aus dem Projektordner. Liegt
+        # eine, gilt sie auch im Auto-Modus als Leitfaden (wichtig für die
+        # Warteschlange: Datei reinlegen = Vorgabe zählt).
         datei = load_script_file(project)
         if datei:
-            skript = datei["text"]
-        else:
+            modus, skript = "skript", datei["text"]
+        elif modus == "skript":
             raise ValueError(
                 "Skript-Modus gewählt, aber kein Skript angegeben – ins "
                 "Eingabefeld tippen oder eine skript.txt in den "
@@ -457,6 +543,10 @@ def select_segments(project: str, modus: str = "auto", skript: str | None = None
     # Stille am echten Audio nachmessen und wegstutzen (Transkript-Timestamps
     # sind bei Pausen nicht verlässlich -> "3-7 s Stille vor der Aussage")
     _trim_silence(project, segmente)
+
+    # Lange Denk-/Sprechpausen MITTEN im Segment rausschneiden
+    segmente = _split_pauses(project, segmente, words,
+                             float(cfg.get("pausen_schnitt_sek", 0.0) or 0.0))
 
     result = {
         "projekt": project,

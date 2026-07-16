@@ -202,3 +202,56 @@ def test_run_all_required_step_failure_still_aborts(projekt, monkeypatch):
                          transcriber=fake_transcriber)
     status = pipeline.load_status(projekt)
     assert status["export"]["status"] == "offen"
+
+
+def test_run_batch_continues_after_failure(env, media, music_lib):
+    """Warteschlange: Projekt 1 läuft komplett durch, Projekt 2 (leer,
+    Transkript schlägt fehl) bricht die Kette NICHT ab."""
+    import shutil
+
+    from autoedit import paths as p
+
+    gut = "batch-gut"
+    kaputt = "batch-kaputt"
+    p.create_project(gut)
+    p.create_project(kaputt)  # bleibt leer -> Transkript wirft Fehler
+    base = p.project_dir(gut)
+    root = media["root"]
+    shutil.copy(root / "dji.wav", base / "input/audio_dji/dji.wav")
+    shutil.copy(root / "cam_a_001.mov", base / "input/cam_a/cam_a_001.mov")
+    shutil.copy(root / "cam_b_001.mp4", base / "input/cam_b/cam_b_001.mp4")
+
+    fake = FakeClaude()
+    meldungen = []
+    results = pipeline.run_batch(
+        [gut, kaputt],
+        progress=lambda f, m="": meldungen.append((f, m)),
+        client=fake, transcriber=fake_transcriber,
+    )
+
+    assert results[gut].startswith("fertig")
+    assert results[kaputt].startswith("FEHLER")
+    assert (p.output_dir(gut) / f"{gut}_premiere.xml").is_file()
+    # Fortschritt nennt Projekt und Position in der Warteschlange
+    assert any(m.startswith(f"[1/2] {gut}:") for _, m in meldungen)
+    assert any("2/2 Projekte" not in m and "1/2 Projekte erfolgreich" in m
+               for _, m in meldungen)
+
+
+def test_script_file_activates_leitfaden_in_auto_mode(projekt, fake_claude):
+    """Warteschlangen-Vorbereitung: skript.txt im Projektordner reicht -
+    auch im Auto-Modus wird sie als Leitfaden verwendet."""
+    from autoedit import cutting, ingest, sync_audio, transcribe
+    from autoedit import paths as p
+
+    ingest.scan_project(projekt)
+    transcribe.transcribe_project(projekt, transcriber=fake_transcriber)
+    sync_audio.compute_offsets(projekt)
+    (p.project_dir(projekt) / "skript.txt").write_text(
+        "Botschaft: Regenerative Landwirtschaft", encoding="utf-8")
+
+    cutting.select_segments(projekt, modus="auto", client=fake_claude)
+    prompt = fake_claude.prompts["reel_auswahl"]
+    assert "Regenerative Landwirtschaft" in prompt
+    assert "LEITFADEN" in prompt
+    assert cutting.load_segments(projekt)["modus"] == "skript"

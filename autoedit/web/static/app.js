@@ -23,13 +23,27 @@ function fmtSec(s) { return `${Number(s).toFixed(1)} s`; }
 
 // ------------------------------------------------------------ Projekte
 
+const batchSelection = new Set();
+
 async function loadProjects() {
   const projects = await api("/api/projects");
   const ul = $("#project-list");
   ul.innerHTML = "";
   for (const p of projects) {
     const li = document.createElement("li");
-    li.textContent = p.name;
+    const done = Object.values(p.status).filter(s => s === "ok").length;
+    const total = Object.keys(p.status).length;
+    li.innerHTML = `<input type="checkbox" class="batch-check"
+        title="Für die Warteschlange vormerken">
+      <span class="pname">${p.name}</span>
+      <span class="muted">${done}/${total}</span>`;
+    const cb = $("input", li);
+    cb.checked = batchSelection.has(p.name);
+    cb.onclick = e => {
+      e.stopPropagation();
+      if (e.target.checked) batchSelection.add(p.name);
+      else batchSelection.delete(p.name);
+    };
     if (p.name === currentProject) li.classList.add("active");
     li.onclick = () => openProject(p.name);
     ul.appendChild(li);
@@ -50,6 +64,7 @@ async function openProject(name) {
 
 async function refreshOverview() {
   overview = await api(`/api/projects/${currentProject}/overview`);
+  renderNextStep();
   renderStatusChain();
   renderConfig();
   renderFiles();
@@ -74,7 +89,48 @@ const STEP_LABELS = {
   musik: "Musik", export: "Export",
 };
 
+const STEP_HINWEISE = {
+  ingest: "Dateien einlesen und prüfen (VFR-Material wird gewandelt)",
+  transkript: "Interview transkribieren (WhisperX, dauert etwas)",
+  sync: "Kameras und Ton synchronisieren",
+  schnitt: "Die besten Aussagen fürs Reel wählen lassen",
+  broll: "B-Roll analysieren und im Reel platzieren",
+  untertitel: "Untertitel erzeugen und korrigieren",
+  musik: "Musik-Track wählen",
+  export: "Premiere-XML erzeugen",
+};
+
+function renderNextStep() {
+  const el = $("#next-step");
+  const next = Object.keys(STEP_LABELS).find(
+    s => overview.status[s]?.status !== "ok");
+  el.classList.remove("hidden");
+  if (!next) {
+    el.className = "next-step done";
+    el.innerHTML = "✅ Alles erledigt – die Premiere-XML steht unten im " +
+      "Export-Bereich zum Download bereit.";
+    return;
+  }
+  const st = overview.status[next];
+  el.className = "next-step" + (st.status === "fehler" ? " fehler" : "");
+  el.innerHTML = `${st.status === "fehler" ? "⚠️ Fehler bei" : "👉 Nächster Schritt:"}
+    <b>${STEP_LABELS[next]}</b>
+    <span class="muted">– ${STEP_HINWEISE[next]}</span>
+    <button class="primary">▶ Jetzt ausführen</button>
+    <button title="Ab diesem Schritt alles Restliche durchrechnen">⏩ bis zum Ende</button>`;
+  const [b1, b2] = el.querySelectorAll("button");
+  b1.onclick = () => runStep(next);
+  b2.onclick = () => startJob(`/api/projects/${currentProject}/run_all`,
+    { ...cutBody(), ab_schritt: next });
+}
+
 function renderStatusChain() {
+  // Sektions-Lampen spiegeln den Schritt-Status
+  document.querySelectorAll("h3 .lamp[data-step]").forEach(el => {
+    const st = overview.status[el.dataset.step];
+    el.className = `lamp ${st ? st.status : "offen"}`;
+    el.title = st?.detail || "";
+  });
   const chain = $("#status-chain");
   chain.innerHTML = "";
   for (const [step, label] of Object.entries(STEP_LABELS)) {
@@ -359,12 +415,15 @@ function fmtLaufzeit(sek) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")} min`;
 }
 
-async function pollJob(job, onDone) {
-  const el = $("#job-status");
+async function pollJob(job, onDone, elSel = "#job-status") {
+  const el = $(elSel);
   if (!el) return;
   pollingJobId = job.id;
+  const isBatch = job.name.startsWith("batch:");
+  let tick = 0;
   el.className = "job";
-  el.innerHTML = `<div class="head"><b>${job.name.split(":").pop()}</b>
+  el.innerHTML = `<div class="head"><b>${isBatch ? "Warteschlange"
+        : job.name.split(":").pop()}</b>
       <span class="pct">0 %</span> · <span class="elapsed muted">0:00 min</span></div>
     <div class="bar"><div></div></div>
     <div class="msg muted"></div>`;
@@ -375,6 +434,8 @@ async function pollJob(job, onDone) {
       $(".pct", el).textContent = `${Math.round(j.fortschritt * 100)} %`;
       $(".elapsed", el).textContent = fmtLaufzeit(j.laufzeit_sekunden || 0);
       $(".bar > div", el).style.width = `${j.fortschritt * 100}%`;
+      // Während der Warteschlange die Projektliste (x/8) mitziehen
+      if (isBatch && ++tick % 8 === 0) loadProjects();
       if (j.status !== "laeuft") {
         clearInterval(timer);
         pollingJobId = null;
@@ -388,7 +449,8 @@ async function pollJob(job, onDone) {
             `${j.meldung || "fertig"} (${fmtLaufzeit(j.laufzeit_sekunden || 0)})`;
           if (onDone) onDone(j);
         }
-        refreshOverview();
+        loadProjects();
+        if (currentProject) refreshOverview();
       }
     } catch (e) { clearInterval(timer); pollingJobId = null; }
   }, 800);
@@ -399,6 +461,16 @@ async function attachRunningJob() {
   try {
     const r = await api(`/api/projects/${currentProject}/jobs/running`);
     if (r.job && r.job.id !== pollingJobId) pollJob(r.job);
+  } catch (e) { /* egal */ }
+}
+
+async function attachRunningBatch() {
+  try {
+    const r = await api("/api/batch/running");
+    if (r.job) {
+      $("#batch-status").classList.remove("hidden");
+      pollJob(r.job, null, "#batch-status");
+    }
   } catch (e) { /* egal */ }
 }
 
@@ -443,6 +515,7 @@ function bindProjectEvents() {
       broll_dauer_sek: Number(form.elements.broll_dauer_sek.value),
       broll_ziel_anzahl: Number(form.elements.broll_ziel_anzahl.value),
       broll_min_abstand_sek: Number(form.elements.broll_min_abstand_sek.value),
+      pausen_schnitt_sek: Number(form.elements.pausen_schnitt_sek.value),
       sprache: form.elements.sprache.value,
       export_format: form.elements.export_format.value,
       musik_aktiv: form.elements.musik_aktiv.checked,
@@ -520,6 +593,19 @@ function bindProjectEvents() {
   };
 }
 
+$("#btn-batch").onclick = async () => {
+  const projekte = [...batchSelection];
+  if (!projekte.length) {
+    return alert("Zuerst oben Projekte ankreuzen, die abgearbeitet werden sollen.");
+  }
+  try {
+    const job = await api("/api/batch", { method: "POST",
+      body: JSON.stringify({ projekte, fortsetzen: true }) });
+    $("#batch-status").classList.remove("hidden");
+    pollJob(job, null, "#batch-status");
+  } catch (e) { alert(e.message); }
+};
+
 $("#btn-new-project").onclick = async () => {
   const name = $("#new-project-name").value.trim();
   if (!name) return;
@@ -539,4 +625,5 @@ $("#btn-new-project").onclick = async () => {
       `Projekte: ${h.projekte_ordner}`;
   } catch (e) { $("#health").textContent = e.message; }
   loadProjects();
+  attachRunningBatch();
 })();

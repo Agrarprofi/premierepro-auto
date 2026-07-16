@@ -234,6 +234,56 @@ def run_all(project: str, progress=None, fortsetzen: bool = True,
     return results
 
 
+# ------------------------------------------------------------ Warteschlange
+
+def run_batch(projects: list[str], progress=None, fortsetzen: bool = True,
+              **kwargs) -> dict:
+    """Mehrere Projekte NACHEINANDER komplett durchrechnen (Nacht-Modus).
+
+    Ein Fehler in einem Projekt stoppt die Warteschlange nicht – das
+    nächste Projekt ist dran; Details stehen im Log des jeweiligen
+    Projekts. Auf macOS hält `caffeinate` den Rechner währenddessen wach.
+    Ergebnis: {projekt: "fertig" | "FEHLER: …"}.
+    """
+    import shutil
+    import subprocess
+
+    wachhalter = None
+    if shutil.which("caffeinate"):
+        # verhindert Ruhezustand, solange die Warteschlange läuft
+        wachhalter = subprocess.Popen(["caffeinate", "-ims"])
+
+    results: dict[str, str] = {}
+    n = len(projects)
+    try:
+        for i, name in enumerate(projects):
+            def sub_progress(frac: float, meldung: str = "",
+                             _i=i, _name=name):
+                if progress:
+                    progress((_i + max(0.0, min(1.0, frac))) / n,
+                             f"[{_i + 1}/{n}] {_name}: {meldung}")
+
+            log(name, "Warteschlange: Projekt gestartet")
+            try:
+                schritte = run_all(name, progress=sub_progress,
+                                   fortsetzen=fortsetzen, **kwargs)
+                fehler = [s for s, d in schritte.items()
+                          if str(d).startswith("FEHLER")]
+                results[name] = ("fertig" if not fehler else
+                                 "fertig – übersprungen: " + ", ".join(fehler))
+            except Exception as exc:  # noqa: BLE001 - Nacht-Modus: weiter!
+                results[name] = f"FEHLER: {type(exc).__name__}: {exc}"
+                log(name, f"Warteschlange: Projekt abgebrochen – {exc}")
+    finally:
+        if wachhalter is not None:
+            wachhalter.terminate()
+
+    if progress:
+        ok = sum(1 for v in results.values() if not v.startswith("FEHLER"))
+        progress(1.0, f"Warteschlange fertig: {ok}/{n} Projekte erfolgreich")
+    return results
+
+
 # ------------------------------------------------------------ Kosten-Schätzung
 
 def estimate_costs(project: str) -> dict:

@@ -19,6 +19,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # Mindestabstand zwischen zwei B-Roll-Einblendungen
     "broll_min_abstand_sek": 1.0,
     "sprache": "de",
+    # Sprechpausen INNERHALB eines Segments ab dieser Länge automatisch
+    # rausschneiden (am echten Audio gemessen); 0 = aus
+    "pausen_schnitt_sek": 1.0,
     # Freitext-Vorgaben für die Reel-Auswahl (z.B. "Fokus auf Bodengesundheit")
     "schnitt_hinweise": "",
     "musik_aktiv": False,
@@ -71,6 +74,8 @@ def _validate(cfg: dict[str, Any]) -> None:
         raise ValueError("broll_ziel_anzahl muss zwischen 0 und 100 liegen")
     if not (0 <= float(cfg["broll_min_abstand_sek"]) <= 30):
         raise ValueError("broll_min_abstand_sek muss zwischen 0 und 30 liegen")
+    if not (0 <= float(cfg["pausen_schnitt_sek"]) <= 10):
+        raise ValueError("pausen_schnitt_sek muss zwischen 0 und 10 liegen")
     if cfg["export_format"] not in ("quelle", "9:16"):
         raise ValueError('export_format muss "quelle" oder "9:16" sein')
     if not isinstance(cfg["schnitt_hinweise"], str) or len(cfg["schnitt_hinweise"]) > 2000:

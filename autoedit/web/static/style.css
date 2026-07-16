@@ -27,6 +27,12 @@ aside li {
 }
 aside li:hover { background: var(--bg); }
 aside li.active { background: var(--accent); color: #fff; }
+aside li { display: flex; align-items: center; gap: .4rem; }
+aside li .pname { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+aside li.active .muted { color: #fff; opacity: .8; }
+#batch-box { margin-top: 1.2rem; border-top: 1px solid var(--line); padding-top: .8rem; }
+#batch-box .muted { font-size: .78rem; }
+#batch-status { margin-top: .6rem; min-width: 0; }
 main { flex: 1; padding: 1rem 1.4rem; max-width: 980px; }
 section {
   background: var(--panel); border: 1px solid var(--line);
@@ -64,6 +70,25 @@ video { max-width: 100%; margin-top: .5rem; border-radius: 4px; }
 .step.ok .lamp { background: var(--ok); }
 .step.fehler .lamp { background: var(--err); }
 .step.laeuft .lamp { background: var(--run); animation: pulse 1s infinite; }
+
+/* Sektions-Lampen (gleiche Farben wie in der Status-Kette) */
+h3 .lamp { display: inline-block; width: .65rem; height: .65rem;
+  border-radius: 50%; background: #c8c4ba; margin-right: .4rem; }
+h3 .lamp.ok { background: var(--ok); }
+h3 .lamp.fehler { background: var(--err); }
+h3 .lamp.laeuft { background: var(--run); animation: pulse 1s infinite; }
+
+/* Nächster-Schritt-Banner */
+.next-step { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap;
+  background: var(--panel); border: 1px solid var(--accent);
+  border-left: 4px solid var(--accent); border-radius: 8px;
+  padding: .6rem .9rem; margin-bottom: 1rem; font-size: .95rem; }
+.next-step.done { border-color: var(--ok); border-left-color: var(--ok); }
+.next-step.fehler { border-color: var(--err); border-left-color: var(--err); }
+
+/* Einklappbare Bereiche (Kosten, Log) */
+section > details > summary { font-size: 1rem; font-weight: 600;
+  color: var(--accent-dark); cursor: pointer; margin-bottom: .5rem; }
 .step button { padding: 0 .4rem; font-size: .75rem; }
 @keyframes pulse { 50% { opacity: .4; } }
 

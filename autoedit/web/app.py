@@ -131,7 +131,8 @@ def overview(name: str) -> dict:
 # ------------------------------------------------------------ Jobs
 
 def _start_job(name: str, jobname: str, fn) -> dict:
-    running = jobs.MANAGER.running_for(f"{name}:")
+    running = (jobs.MANAGER.running_for(f"{name}:")
+               or jobs.MANAGER.running_for("batch:"))
     if running:
         raise HTTPException(409, f"Es läuft bereits ein Job: {running.name}")
     job = jobs.MANAGER.start(f"{name}:{jobname}", fn)
@@ -152,6 +153,37 @@ def running_job(name: str) -> dict:
     Fortschrittsanzeige nach einem Seiten-Reload)."""
     _project_or_404(name)
     job = jobs.MANAGER.running_for(f"{name}:")
+    return {"job": job.as_dict() if job else None}
+
+
+# ------------------------------------------------------------ Warteschlange
+
+class BatchOptions(BaseModel):
+    projekte: list[str]
+    fortsetzen: bool = True
+
+
+@app.post("/api/batch")
+def start_batch(body: BatchOptions) -> dict:
+    """Mehrere Projekte nacheinander komplett durchrechnen (Nacht-Modus)."""
+    if not body.projekte:
+        raise HTTPException(400, "Keine Projekte angegeben")
+    for name in body.projekte:
+        _project_or_404(name)
+    running = jobs.MANAGER.running_any()
+    if running:
+        raise HTTPException(409, f"Es läuft bereits ein Job: {running.name}")
+
+    def runner(progress):
+        return pipeline.run_batch(body.projekte, progress=progress,
+                                  fortsetzen=body.fortsetzen)
+
+    return jobs.MANAGER.start("batch:run_all", runner).as_dict()
+
+
+@app.get("/api/batch/running")
+def batch_running() -> dict:
+    job = jobs.MANAGER.running_for("batch:")
     return {"job": job.as_dict() if job else None}
 
 

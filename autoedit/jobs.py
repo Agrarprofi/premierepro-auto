@@ -79,5 +79,12 @@ class JobManager:
                     return job
         return None
 
+    def running_any(self) -> Job | None:
+        with self._lock:
+            for job in self._jobs.values():
+                if job.status == "laeuft":
+                    return job
+        return None
+
 
 MANAGER = JobManager()

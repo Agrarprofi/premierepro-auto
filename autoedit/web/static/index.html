@@ -20,6 +20,15 @@
       <input id="new-project-name" placeholder="neues-projekt">
       <button id="btn-new-project">+ Anlegen</button>
     </div>
+    <div id="batch-box">
+      <h2>Warteschlange</h2>
+      <p class="muted">Projekte oben ankreuzen und nacheinander komplett
+      durchrechnen lassen (z.B. über Nacht) – morgens liegen die
+      Premiere-XMLs in den Output-Ordnern. Ein Fehler in einem Projekt
+      stoppt die anderen nicht.</p>
+      <button id="btn-batch" class="primary">🌙 Nacheinander abarbeiten</button>
+      <div id="batch-status" class="job hidden"></div>
+    </div>
   </aside>
 
   <main id="main">
@@ -31,6 +40,7 @@
 
 <template id="tpl-project">
   <h2 id="project-title"></h2>
+  <div id="next-step" class="hidden"></div>
 
   <section>
     <h3>Status-Kette</h3>
@@ -53,6 +63,8 @@
         <input type="number" name="broll_ziel_anzahl" min="0" max="100"></label>
       <label>B-Roll-Mindestabstand (s)
         <input type="number" step="0.1" name="broll_min_abstand_sek" min="0" max="30"></label>
+      <label>Innen-Pausen schneiden ab (s; 0 = aus)
+        <input type="number" step="0.1" name="pausen_schnitt_sek" min="0" max="10"></label>
       <label>Sprache <input name="sprache"></label>
       <label>Export-Format
         <select name="export_format">
@@ -77,12 +89,12 @@
   </section>
 
   <section>
-    <h3>Dateien</h3>
+    <h3><span class="lamp" data-step="ingest"></span>Dateien</h3>
     <div id="files" class="files"></div>
   </section>
 
   <section>
-    <h3>Transkript</h3>
+    <h3><span class="lamp" data-step="transkript"></span>Transkript</h3>
     <div class="row">
       <button id="btn-transcribe">Transkription starten</button>
       <button id="btn-show-transcript">Vorschau anzeigen</button>
@@ -91,7 +103,7 @@
   </section>
 
   <section>
-    <h3>Synchronisation</h3>
+    <h3><span class="lamp" data-step="sync"></span>Synchronisation</h3>
     <div class="row">
       <button id="btn-sync">Sync berechnen</button>
       <button id="btn-sync-preview-a">Sync prüfen: Kamera A</button>
@@ -110,7 +122,7 @@
   </section>
 
   <section>
-    <h3>Schnitt (Reel-Auswahl)</h3>
+    <h3><span class="lamp" data-step="schnitt"></span>Schnitt (Reel-Auswahl)</h3>
     <label class="block">Skript / Leitfaden (optional – leer lassen =
       vollautomatische Auswahl)
       <textarea id="cut-script" rows="4"
@@ -135,7 +147,7 @@
   </section>
 
   <section>
-    <h3>B-Roll</h3>
+    <h3><span class="lamp" data-step="broll"></span>B-Roll</h3>
     <div class="row">
       <button id="btn-broll">Analysieren + Zuordnen</button>
     </div>
@@ -143,7 +155,7 @@
   </section>
 
   <section>
-    <h3>Untertitel</h3>
+    <h3><span class="lamp" data-step="untertitel"></span>Untertitel</h3>
     <div class="row">
       <button id="btn-subtitles">SRT erzeugen + korrigieren</button>
       <a id="link-srt" class="hidden" download>reel.srt</a>
@@ -153,7 +165,7 @@
   </section>
 
   <section>
-    <h3>Musik</h3>
+    <h3><span class="lamp" data-step="musik"></span>Musik</h3>
     <div class="row">
       <button id="btn-music">Track von Claude wählen lassen</button>
       <select id="music-select"><option value="">– manuell wählen –</option></select>
@@ -162,7 +174,7 @@
   </section>
 
   <section>
-    <h3>Export</h3>
+    <h3><span class="lamp" data-step="export"></span>Export</h3>
     <div class="row">
       <button id="btn-export" class="primary">FCPXML erzeugen</button>
       <a id="link-xml" class="hidden" download>Premiere-XML herunterladen</a>
@@ -176,14 +188,18 @@
   </section>
 
   <section>
-    <h3>Kosten</h3>
-    <div id="costs" class="muted"></div>
+    <details>
+      <summary>Kosten</summary>
+      <div id="costs" class="muted"></div>
+    </details>
   </section>
 
   <section>
-    <h3>Log</h3>
-    <button id="btn-log">Aktualisieren</button>
-    <pre id="log" class="scroll"></pre>
+    <details>
+      <summary>Log</summary>
+      <button id="btn-log">Aktualisieren</button>
+      <pre id="log" class="scroll"></pre>
+    </details>
   </section>
 </template>
 
