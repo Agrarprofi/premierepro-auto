@@ -198,3 +198,31 @@ def test_complete_json_retries_on_truncated_answer():
     raw = client.complete_json("broll_matching", "prompt", max_tokens=2048)
     assert raw == [{"a": 1}, {"a": 2}]
     assert limits == [2048, 4096]
+
+
+def test_enforce_rules_verschiebt_statt_verwerfen():
+    """Ziel 20, Kandidaten in zu dichten 2er-Clustern: die Regel-Prüfung
+    schiebt die Kollisionen in freie Lücken (max ±2.5 s), statt sie zu
+    verwerfen -> Ziel wird erreicht, Abstände bleiben eingehalten."""
+    cands = []
+    i = 0
+    for basis in range(4, 64, 6):          # 10 Cluster à 2 Kandidaten
+        for d in (0.0, 0.5):
+            cands.append({"id": str(i), "transkript_zeit": basis + d,
+                          "broll_einstieg": 0.0, "dauer": 2.0,
+                          "broll_datei": "x", "begruendung": ""})
+            i += 1
+
+    ok = broll._enforce_rules(cands, 2.0, 66.0, min_abstand=1.0,
+                              budget=20 * 2.0, ziel=20)
+    assert len(ok) == 20
+    zeiten = [m["transkript_zeit"] for m in ok]
+    assert all(b - a >= 3.0 - 1e-6 for a, b in zip(zeiten, zeiten[1:]))
+    verschoben = [m for m in ok if "verschoben_von" in m]
+    assert len(verschoben) == 10
+    assert all(abs(m["transkript_zeit"] - m["verschoben_von"]) <= 2.5
+               for m in verschoben)
+    # ohne Ziel: altes Verhalten (Kollisionen fliegen raus)
+    ok_alt = broll._enforce_rules([dict(c) for c in cands], 2.0, 66.0,
+                                  min_abstand=1.0)
+    assert len(ok_alt) == 10

@@ -393,6 +393,11 @@ function renderBroll() {
     wrap.innerHTML = '<p class="muted">Noch keine Zuordnungen.</p>';
     return;
   }
+  const kopf = document.createElement("p");
+  kopf.className = "muted";
+  kopf.textContent = `${data.matches.length} Zuordnungen`
+    + (data.hinweis ? ` – ${data.hinweis}` : "");
+  wrap.appendChild(kopf);
   for (const m of data.matches) {
     const div = document.createElement("div");
     div.className = "match";

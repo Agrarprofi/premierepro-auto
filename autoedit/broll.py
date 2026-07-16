@@ -247,8 +247,10 @@ def match_broll(project: str, progress=None, client=None) -> dict:
         "(der Hook bleibt Talking Head)\n"
         f"- jede Einblendung dauert {broll_dauer:.1f} Sekunden\n"
         + anzahl_regel + joins_regel +
-        f"- mindestens {min_abstand:.1f} Sekunden Abstand zwischen zwei "
-        "Einblendungen (nie zwei B-Rolls direkt hintereinander)\n"
+        f"- zwischen den STARTZEITEN zweier Einblendungen müssen mindestens "
+        f"{broll_dauer + min_abstand:.1f} Sekunden liegen ({broll_dauer:.1f} s "
+        f"Einblendung + {min_abstand:.1f} s Abstand) – zu dichte Vorschläge "
+        "werden verworfen\n"
         "- 'transkript_zeit' ist der Startzeitpunkt der Einblendung auf der "
         "Reel-Zeitachse in Sekunden. Setze ihn EXAKT auf den Zeitpunkt, an "
         "dem das inhaltlich passende Wort fällt (die Zeitmarken in der "
@@ -292,7 +294,8 @@ def match_broll(project: str, progress=None, client=None) -> dict:
         })
 
     matches = _enforce_rules(candidates, broll_dauer, reel_dauer,
-                             min_abstand=min_abstand, budget=budget)
+                             min_abstand=min_abstand, budget=budget,
+                             ziel=ziel)
     result = {"projekt": project, "matches": matches,
               "reel_stand": cutting.segment_stand(project)}
     if ziel > 0 and len(matches) < ziel:
@@ -306,25 +309,73 @@ def match_broll(project: str, progress=None, client=None) -> dict:
     return result
 
 
+# Beim Auffüllen dürfen Kandidaten höchstens so weit vom inhaltlich
+# passenden Wort wegrutschen
+VERSCHIEBE_TOLERANZ_SEC = 2.5
+
+
 def _enforce_rules(candidates: list[dict], broll_dauer: float,
                    reel_dauer: float, min_abstand: float = MIN_ABSTAND_SEC,
-                   budget: float | None = None) -> list[dict]:
-    """Regeln hart durchsetzen, egal was Claude liefert."""
+                   budget: float | None = None, ziel: int = 0) -> list[dict]:
+    """Regeln hart durchsetzen, egal was Claude liefert.
+
+    Mit Ziel-Anzahl: zu dicht gesetzte Kandidaten werden nicht einfach
+    verworfen, sondern (bis ±2.5 s) in die nächste freie Lücke geschoben,
+    bis das Ziel erreicht ist ("verschoben_von" dokumentiert das).
+    """
     ok: list[dict] = []
+    verworfen: list[dict] = []
     if budget is None:
         budget = reel_dauer * MAX_ABDECKUNG
     for cand in sorted(candidates, key=lambda c: c["transkript_zeit"]):
         t = cand["transkript_zeit"]
-        if t < HOOK_SPERRE_SEC:
-            continue
-        if t + broll_dauer > reel_dauer:
-            continue
+        if t + broll_dauer > reel_dauer or t < HOOK_SPERRE_SEC:
+            continue  # außerhalb des Reels/Hook: nicht verschiebbar genug
         if ok and t < ok[-1]["transkript_zeit"] + broll_dauer + min_abstand:
+            verworfen.append(cand)
             continue
         if (len(ok) + 1) * broll_dauer > budget + 1e-6:
-            break
+            verworfen.append(cand)
+            continue
         ok.append(cand)
-    return ok
+    if ziel > 0 and len(ok) < ziel:
+        _fuelle_auf(ok, verworfen, broll_dauer, reel_dauer, min_abstand, ziel)
+    return sorted(ok, key=lambda m: m["transkript_zeit"])
+
+
+def _fuelle_auf(ok: list[dict], rest: list[dict], broll_dauer: float,
+                reel_dauer: float, min_abstand: float, ziel: int) -> None:
+    """Verworfene Kandidaten leicht verschieben statt verwerfen."""
+    schritt = broll_dauer + min_abstand
+
+    def passt(t: float) -> bool:
+        return (HOOK_SPERRE_SEC <= t
+                and t + broll_dauer <= reel_dauer
+                and all(abs(t - m["transkript_zeit"]) >= schritt - 1e-6
+                        for m in ok))
+
+    for cand in rest:
+        if len(ok) >= ziel:
+            break
+        wunsch = cand["transkript_zeit"]
+        best = wunsch if passt(wunsch) else None
+        if best is None:
+            # Anschluss-Positionen direkt neben belegten Slots probieren
+            optionen = [wert for m in ok
+                        for wert in (m["transkript_zeit"] - schritt,
+                                     m["transkript_zeit"] + schritt)]
+            gueltig = [t for t in optionen
+                       if abs(t - wunsch) <= VERSCHIEBE_TOLERANZ_SEC
+                       and passt(t)]
+            if gueltig:
+                best = min(gueltig, key=lambda t: abs(t - wunsch))
+        if best is None:
+            continue
+        neu = dict(cand)
+        if abs(best - wunsch) > 0.01:
+            neu["verschoben_von"] = wunsch
+            neu["transkript_zeit"] = round(best, 3)
+        ok.append(neu)
 
 
 def save_matches(project: str, data: dict) -> None:
