@@ -146,7 +146,15 @@ def build_timeline(project: str) -> dict:
         info = ffmpeg_utils.media_info(ref_path)
         ref_clip = {**info, "relpfad": ref_rel, "name": ref_path.name}
 
-    for seg in segs:
+    # Auto-Zoom: pro Segment ein Punch-In (wechsel) oder eine Zoom-Fahrt
+    # (sanft) - direkt als Motion-Scale auf den Kamera-Clips, in Premiere
+    # pro Clip nachjustierbar. Einstellungsebenen kennt FCP7-XML nicht.
+    zoom_modus = str(cfg.get("zoom_modus", "aus"))
+    zoom_faktor = 1.0 + float(cfg.get("zoom_staerke_prozent", 0) or 0) / 100.0
+    if zoom_faktor <= 1.0:
+        zoom_modus = "aus"
+
+    for si, seg in enumerate(segs):
         t0 = seg["timeline_start"]
         for role, vtrack, atrack in (("cam_a", "V1", "A2"), ("cam_b", "V2", None)):
             pieces, uncovered = sync_audio.cover_range(
@@ -167,6 +175,15 @@ def build_timeline(project: str) -> dict:
                                       p["dauer"], p["src_in"])
                 _apply_av_versatz(ev, clip, warnungen)
                 audio_ev = dict(ev)  # Kamera-Ton VOR der Bild-Korrektur
+                if zoom_modus == "wechsel" and si % 2 == 1:
+                    ev["zoom"] = round(zoom_faktor, 4)
+                elif zoom_modus == "sanft":
+                    von, bis = ((1.0, zoom_faktor) if si % 2 == 0
+                                else (zoom_faktor, 1.0))
+                    a = p["rel_start"] / seg["dauer"]
+                    b = (p["rel_start"] + p["dauer"]) / seg["dauer"]
+                    ev["zoom_fahrt"] = [round(von + (bis - von) * a, 4),
+                                        round(von + (bis - von) * b, 4)]
                 entry = sync["offsets"].get(clip["relpfad"]) or {}
                 video_korr = float(entry.get("video_korrektur_sekunden") or 0.0)
                 if abs(video_korr) >= 0.001:
@@ -280,7 +297,23 @@ def _rate_xml(timebase: int, ntsc: bool, indent: str) -> str:
             f"{indent}\t<ntsc>{n}</ntsc>\n{indent}</rate>\n")
 
 
-def _scale_filter(scale_pct: float) -> str:
+def _scale_filter(scale_pct: float | None = None,
+                  keyframes: list[tuple[int, float]] | None = None) -> str:
+    """Basic-Motion-Scale: fester Wert ODER Keyframes (Zoom-Fahrt).
+
+    Keyframe-Zeiten (<when>) laufen in Quell-Frames der Datei, also in
+    derselben Zeitachse wie <in>/<out> des Clipitems.
+    """
+    if keyframes:
+        wert = "".join(
+            "\t\t\t\t\t\t\t\t\t<keyframe>\n"
+            f"\t\t\t\t\t\t\t\t\t\t<when>{when}</when>\n"
+            f"\t\t\t\t\t\t\t\t\t\t<value>{val:.4f}</value>\n"
+            "\t\t\t\t\t\t\t\t\t</keyframe>\n"
+            for when, val in keyframes
+        )
+    else:
+        wert = f"\t\t\t\t\t\t\t\t\t<value>{scale_pct:.4f}</value>\n"
     return f"""\t\t\t\t\t\t<filter>
 \t\t\t\t\t\t\t<effect>
 \t\t\t\t\t\t\t\t<name>Basic Motion</name>
@@ -293,8 +326,7 @@ def _scale_filter(scale_pct: float) -> str:
 \t\t\t\t\t\t\t\t\t<name>Scale</name>
 \t\t\t\t\t\t\t\t\t<valuemin>0</valuemin>
 \t\t\t\t\t\t\t\t\t<valuemax>1000</valuemax>
-\t\t\t\t\t\t\t\t\t<value>{scale_pct:.4f}</value>
-\t\t\t\t\t\t\t\t</parameter>
+{wert}\t\t\t\t\t\t\t\t</parameter>
 \t\t\t\t\t\t\t</effect>
 \t\t\t\t\t\t</filter>
 """
@@ -452,9 +484,18 @@ def _clipitem(ev: dict, idx: int, files: _FileRegistry, seq_fps: float,
     src_out = src_in + to_frames(ev["dauer"], f_fps)
     filters = ""
     if mediatype == "video" and ev.get("breite") and ev.get("hoehe"):
+        # Scale-to-fill x Auto-Zoom in EINEM Basic-Motion-Filter
         pct = max(seq_w / float(ev["breite"]), seq_h / float(ev["hoehe"])) * 100.0
-        if abs(pct - 100.0) > 0.01:
-            filters += _scale_filter(pct)
+        fahrt = ev.get("zoom_fahrt")
+        if fahrt:
+            filters += _scale_filter(keyframes=[
+                (src_in, pct * float(fahrt[0])),
+                (src_out, pct * float(fahrt[1])),
+            ])
+        else:
+            pct *= float(ev.get("zoom") or 1.0)
+            if abs(pct - 100.0) > 0.01:
+                filters += _scale_filter(pct)
     if mediatype == "audio" and ev.get("gain_db") is not None:
         filters += _levels_filter(float(ev["gain_db"]))
     sourcetrack = ""

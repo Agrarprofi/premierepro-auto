@@ -436,6 +436,16 @@ def post_preset(body: PresetSave) -> dict:
     return config.list_presets()
 
 
+@app.delete("/api/presets/{name}")
+def delete_preset(name: str) -> dict:
+    try:
+        return config.delete_preset(name)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc))
+    except ValueError as exc:
+        raise _err(exc)
+
+
 class PresetApply(BaseModel):
     preset: str
 

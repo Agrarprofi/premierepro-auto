@@ -570,6 +570,8 @@ function bindProjectEvents() {
       pausen_schnitt_sek: Number(form.elements.pausen_schnitt_sek.value),
       sprache: form.elements.sprache.value,
       export_format: form.elements.export_format.value,
+      zoom_modus: form.elements.zoom_modus.value,
+      zoom_staerke_prozent: Number(form.elements.zoom_staerke_prozent.value),
       musik_aktiv: form.elements.musik_aktiv.checked,
       untertitel_aktiv: form.elements.untertitel_aktiv.checked,
       claude_modell: form.elements.claude_modell.value,
@@ -583,6 +585,19 @@ function bindProjectEvents() {
     } catch (e) { alert(e.message); }
   };
 
+  // Auswahl befüllt das Namensfeld vor: Config anpassen + "Als Preset
+  // speichern" überschreibt dann genau dieses Preset (= Ändern)
+  $("#preset-select").onchange = e => {
+    if (e.target.value) $("#preset-name").value = e.target.value;
+  };
+  $("#btn-delete-preset").onclick = async () => {
+    const preset = $("#preset-select").value;
+    if (!preset) return alert("Zuerst ein Preset auswählen.");
+    if (!confirm(`Preset „${preset}“ wirklich löschen?`)) return;
+    await api(`/api/presets/${preset}`, { method: "DELETE" });
+    $("#preset-name").value = "";
+    loadPresets();
+  };
   $("#btn-apply-preset").onclick = async () => {
     const preset = $("#preset-select").value;
     if (!preset) return;

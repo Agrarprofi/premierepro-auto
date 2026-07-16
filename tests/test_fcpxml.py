@@ -400,3 +400,77 @@ def test_fcpxml_bin_structure_and_masterclips(projekt, fake_claude):
     volle = [f for f in root.iter("file") if f.find("pathurl") is not None]
     urls = [f.findtext("pathurl") for f in volle]
     assert len(urls) == len(set(urls))
+
+
+def _scale_param(item):
+    for p in item.iter("parameter"):
+        if p.findtext("parameterid") == "scale":
+            return p
+    return None
+
+
+def test_auto_zoom_wechsel(projekt, fake_claude):
+    """Default 'wechsel': Segment 1 ohne Zoom, Segment 2 mit Punch-In
+    (108%) - auf V1 UND V2, damit der Kamerawechsel konsistent bleibt."""
+    prepared_project(projekt, fake_claude, with_broll=False)
+    out = fcpxml.generate_fcpxml(projekt)
+    tree = ET.parse(out)
+    for track_idx in (0, 1):
+        items = tree.getroot().findall(
+            ".//sequence/media/video/track")[track_idx].findall("clipitem")
+        assert _scale_param(items[0]) is None          # Quelle == Sequenz
+        p = _scale_param(items[1])
+        assert p is not None
+        assert float(p.findtext("value")) == pytest.approx(108.0, abs=0.1)
+
+
+def test_auto_zoom_sanft_keyframes(projekt, fake_claude):
+    """'sanft': Keyframe-Fahrt über das Segment, abwechselnd rein/raus;
+    Keyframe-Zeiten liegen auf in/out des Clips (Quell-Frames)."""
+    config.save_config(projekt, {"zoom_modus": "sanft",
+                                 "zoom_staerke_prozent": 10})
+    prepared_project(projekt, fake_claude, with_broll=False)
+    out = fcpxml.generate_fcpxml(projekt)
+    tree = ET.parse(out)
+    items = tree.getroot().findall(
+        ".//sequence/media/video/track")[0].findall("clipitem")
+
+    def fahrt(item):
+        p = _scale_param(item)
+        kfs = [(int(k.findtext("when")), float(k.findtext("value")))
+               for k in p.findall("keyframe")]
+        assert kfs[0][0] == int(item.findtext("in"))
+        assert kfs[-1][0] == int(item.findtext("out"))
+        return kfs[0][1], kfs[-1][1]
+
+    v1, b1 = fahrt(items[0])   # Segment 1: rein zoomen
+    assert (v1, b1) == (pytest.approx(100.0, abs=0.1),
+                        pytest.approx(110.0, abs=0.1))
+    v2, b2 = fahrt(items[1])   # Segment 2: wieder raus
+    assert (v2, b2) == (pytest.approx(110.0, abs=0.1),
+                        pytest.approx(100.0, abs=0.1))
+
+
+def test_auto_zoom_aus_and_916_kombination(projekt, fake_claude):
+    """zoom 'aus' -> kein Filter; 9:16 + wechsel -> Zoom multipliziert
+    sich in den Scale-to-fill."""
+    config.save_config(projekt, {"zoom_modus": "aus"})
+    prepared_project(projekt, fake_claude, with_broll=False)
+    out = fcpxml.generate_fcpxml(projekt)
+    tree = ET.parse(out)
+    items = tree.getroot().findall(
+        ".//sequence/media/video/track")[0].findall("clipitem")
+    assert all(_scale_param(i) is None for i in items)
+
+    config.save_config(projekt, {"zoom_modus": "wechsel",
+                                 "zoom_staerke_prozent": 8,
+                                 "export_format": "9:16"})
+    out = fcpxml.generate_fcpxml(projekt)
+    tree = ET.parse(out)
+    items = tree.getroot().findall(
+        ".//sequence/media/video/track")[0].findall("clipitem")
+    fill = 1920 / 360 * 100
+    assert float(_scale_param(items[0]).findtext("value")) == \
+        pytest.approx(fill, abs=0.1)
+    assert float(_scale_param(items[1]).findtext("value")) == \
+        pytest.approx(fill * 1.08, abs=0.5)

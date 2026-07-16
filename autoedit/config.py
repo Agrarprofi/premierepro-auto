@@ -28,6 +28,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "untertitel_aktiv": True,
     # "quelle" = Auflösung/Framerate der Kamera A, "9:16" = 1080x1920 (Reels)
     "export_format": "quelle",
+    # Auto-Zoom im Export: "wechsel" = statischer Punch-In auf jedem
+    # 2. Segment (kaschiert Jump-Cuts, klassischer Reel-Look),
+    # "sanft" = langsame Zoom-Fahrt in jedem Segment (Keyframes),
+    # "aus" = keine Zooms
+    "zoom_modus": "wechsel",
+    "zoom_staerke_prozent": 8,
     # Claude-Modell für Schnitt/B-Roll/Untertitel/Musik
     "claude_modell": "claude-sonnet-4-6",
     # WhisperX-Modell; "large-v3-turbo" ist ~4x schneller bei fast
@@ -81,6 +87,10 @@ def _validate(cfg: dict[str, Any]) -> None:
         raise ValueError("pausen_schnitt_sek muss zwischen 0 und 10 liegen")
     if cfg["export_format"] not in ("quelle", "9:16"):
         raise ValueError('export_format muss "quelle" oder "9:16" sein')
+    if cfg["zoom_modus"] not in ("aus", "wechsel", "sanft"):
+        raise ValueError('zoom_modus muss "aus", "wechsel" oder "sanft" sein')
+    if not (0 <= float(cfg["zoom_staerke_prozent"]) <= 40):
+        raise ValueError("zoom_staerke_prozent muss zwischen 0 und 40 liegen")
     if not isinstance(cfg["schnitt_hinweise"], str) or len(cfg["schnitt_hinweise"]) > 2000:
         raise ValueError("schnitt_hinweise muss ein Text (max. 2000 Zeichen) sein")
     for key in ("musik_aktiv", "untertitel_aktiv"):
@@ -114,6 +124,17 @@ def save_preset(name: str, cfg: dict[str, Any]) -> None:
     (pdir / f"{name}.yaml").write_text(
         yaml.safe_dump(known, allow_unicode=True, sort_keys=False), encoding="utf-8"
     )
+
+
+def delete_preset(name: str) -> dict[str, dict[str, Any]]:
+    """Preset löschen; Rückgabe: aktualisierte Preset-Liste."""
+    if not paths.valid_project_name(name):
+        raise ValueError(f"Ungültiger Preset-Name: {name!r}")
+    f = paths.presets_dir() / f"{name}.yaml"
+    if not f.is_file():
+        raise KeyError(f"Preset nicht gefunden: {name!r}")
+    f.unlink()
+    return list_presets()
 
 
 def apply_preset(project: str, preset_name: str) -> dict[str, Any]:

@@ -310,3 +310,14 @@ def test_delete_project_blocked_while_job_running(client, projekt):
             if jobs.MANAGER.get(job.id).status != "laeuft":
                 break
             time.sleep(0.05)
+
+
+def test_preset_delete_api(client, projekt):
+    client.post("/api/presets", json={"name": "test-preset",
+                                      "projekt": projekt})
+    assert "test-preset" in client.get("/api/presets").json()
+
+    res = client.delete("/api/presets/test-preset")
+    assert res.status_code == 200
+    assert "test-preset" not in res.json()
+    assert client.delete("/api/presets/test-preset").status_code == 404

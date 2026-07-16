@@ -78,6 +78,16 @@
           <option value="9:16">9:16 (1080×1920)</option>
         </select>
       </label>
+      <label title="Zoom-Stufen automatisch auf die Kamera-Clips legen (in Premiere pro Clip nachjustierbar)">
+        Auto-Zoom
+        <select name="zoom_modus">
+          <option value="wechsel">Punch-In auf jedem 2. Segment</option>
+          <option value="sanft">sanfte Zoom-Fahrt pro Segment</option>
+          <option value="aus">aus</option>
+        </select>
+      </label>
+      <label>Zoom-Stärke (%)
+        <input type="number" name="zoom_staerke_prozent" min="0" max="40"></label>
       <label class="check"><input type="checkbox" name="musik_aktiv"> Musik</label>
       <label class="check"><input type="checkbox" name="untertitel_aktiv"> Untertitel</label>
       <label>Claude-Modell <input name="claude_modell"></label>
@@ -96,8 +106,11 @@
       <button id="btn-save-config">Speichern</button>
       <select id="preset-select"><option value="">Preset wählen…</option></select>
       <button id="btn-apply-preset">Preset anwenden</button>
+      <button id="btn-delete-preset" class="danger"
+        title="Ausgewähltes Preset nach Rückfrage löschen">🗑</button>
       <input id="preset-name" placeholder="Preset-Name">
-      <button id="btn-save-preset">Als Preset speichern</button>
+      <button id="btn-save-preset"
+        title="Aktuelle Konfiguration unter diesem Namen speichern – existiert der Name schon, wird das Preset überschrieben (= Ändern)">Als Preset speichern</button>
     </div>
   </section>
 

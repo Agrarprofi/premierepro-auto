@@ -91,6 +91,9 @@ schnitt_hinweise: ""       # Freitext-Vorgaben für die Reel-Auswahl
 musik_aktiv: false
 untertitel_aktiv: true
 export_format: quelle      # oder "9:16" (1080×1920, Clips zentriert skaliert)
+zoom_modus: wechsel        # Auto-Zoom: "wechsel" (Punch-In auf jedem 2.
+                           # Segment), "sanft" (Zoom-Fahrt, Keyframes), "aus"
+zoom_staerke_prozent: 8    # Stärke des Zooms
 claude_modell: claude-sonnet-4-6
 whisper_modell: large-v3   # "large-v3-turbo" = ~4x schnellere Transkription
 ```
