@@ -198,3 +198,48 @@ def test_batch_blocks_parallel_jobs(client, projekt):
             if jobs.MANAGER.running_any() is None:
                 break
             time.sleep(0.05)
+
+
+def test_cancel_job(client, projekt):
+    from autoedit import jobs
+
+    def langsam(progress):
+        for i in range(200):
+            progress(i / 200, f"Schritt {i}")  # wirft nach dem Abbruch
+            time.sleep(0.02)
+
+    job = jobs.MANAGER.start(f"{projekt}:langsam", langsam)
+    time.sleep(0.1)
+    res = client.post(f"/api/jobs/{job.id}/cancel")
+    assert res.status_code == 200
+
+    for _ in range(100):
+        j = client.get(f"/api/jobs/{job.id}").json()
+        if j["status"] != "laeuft":
+            break
+        time.sleep(0.05)
+    assert j["status"] == "abgebrochen"
+
+    res = client.post("/api/jobs/gibtsnicht/cancel")
+    assert res.status_code == 404
+
+
+def test_cancel_not_swallowed_by_optional_steps(projekt, fake_claude):
+    """Ein Abbruch während eines optionalen Schritts (B-Roll) darf die
+    Kette NICHT weiterlaufen lassen."""
+    import pytest as _pytest
+
+    from autoedit import jobs, pipeline
+    from tests.conftest import fake_transcriber, prepared_project
+
+    prepared_project(projekt, fake_claude, with_broll=False)
+
+    class AbbruchClaude:
+        def complete_json(self, zweck, *a, **kw):
+            raise jobs.JobAbgebrochen()
+        complete_text = complete_json
+        describe_images_json = complete_json
+
+    with _pytest.raises(jobs.JobAbgebrochen):
+        pipeline.run_all(projekt, fortsetzen=True, client=AbbruchClaude(),
+                         transcriber=fake_transcriber)

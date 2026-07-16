@@ -77,3 +77,47 @@ def test_scan_converts_vfr_to_cfr(projekt, media):
     mtime = cfr.stat().st_mtime
     ingest.scan_project(projekt)
     assert cfr.stat().st_mtime == mtime
+
+
+def test_vfr_detection_catches_sparse_drops(projekt, media):
+    """Der LKOE-Fall: wenige gedroppte Frames (99.9x statt 100 fps) sind
+    relativ winzig, summieren sich aber über die Dateilänge zu sichtbarem
+    Bild-Drift - die Erkennung muss auf den DRIFT schauen."""
+    from autoedit import ffmpeg_utils
+    from tests.conftest import _run
+
+    cam_dir = paths.input_dir(projekt, "cam_a")
+    # jeden 250. Frame verwerfen: nur 0.4% Abweichung, aber Drift wächst
+    _run([
+        "ffmpeg", "-y", "-v", "error", "-i", str(media["root"] / "cam_a_001.mov"),
+        "-vf", "select='not(eq(mod(n\\,250)\\,0))'", "-fps_mode", "vfr",
+        "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+        "-c:a", "pcm_s16le", str(cam_dir / "cam_a_drop.mov"),
+    ])
+    info = ffmpeg_utils.media_info(cam_dir / "cam_a_drop.mov")
+    # relative Abweichung klein, Drift über 24 s aber ~0.1 s -> Verdacht!
+    assert info["vfr_verdacht"] is True
+    assert info["vfr_drift_sek"] > 0.05
+
+
+def test_force_cfr_survives_rescan(projekt, media):
+    """Manueller "→ CFR"-Knopf: wandelt auch ohne VFR-Verdacht und die
+    Entscheidung übersteht einen erneuten Ingest-Lauf."""
+    ingest.scan_project(projekt)
+    rel = "input/cam_b/cam_b_001.mp4"
+
+    clip = ingest.force_cfr(projekt, rel)
+    assert clip["cfr_erzwungen"] is True
+    assert clip["cfr_pfad"].startswith("output/cfr/cam_b/")
+    assert ingest.clip_datei(projekt, clip).is_file()
+
+    # Rescan behält die Wandlung bei (Cache, keine Neukodierung)
+    mtime = ingest.clip_datei(projekt, clip).stat().st_mtime
+    result = ingest.scan_project(projekt)
+    neu = [c for c in result["clips"] if c["relpfad"] == rel][0]
+    assert neu.get("cfr_erzwungen") is True
+    assert neu["cfr_pfad"] == clip["cfr_pfad"]
+    assert ingest.clip_datei(projekt, neu).stat().st_mtime == mtime
+
+    with pytest.raises(KeyError):
+        ingest.force_cfr(projekt, "input/cam_b/gibtsnicht.mp4")

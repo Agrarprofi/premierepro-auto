@@ -100,6 +100,10 @@ section > details > summary { font-size: 1rem; font-weight: 600;
 .job .msg { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .job.fehler { color: var(--err); }
 .job.fehler .msg { white-space: normal; }
+.job .cancel { margin-left: auto; padding: 0 .4rem; font-size: .75rem;
+  color: var(--err); background: none; border: 1px solid var(--line);
+  border-radius: 4px; cursor: pointer; }
+.mini-cfr { padding: 0 .3rem; font-size: .72rem; cursor: pointer; }
 
 .files { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: .6rem; font-size: .85rem; }
 .files h4 { margin: 0 0 .2rem; font-size: .85rem; }

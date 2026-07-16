@@ -10,17 +10,27 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 
+class JobAbgebrochen(Exception):
+    """Vom Nutzer abgebrochen - wird beim nächsten Fortschritts-Checkpoint
+    aus dem progress-Callback geworfen und darf nirgends verschluckt
+    werden (auch nicht von der Optional-Schritt-Toleranz der Pipeline)."""
+
+    def __str__(self) -> str:  # noqa: D105
+        return "vom Nutzer abgebrochen"
+
+
 @dataclass
 class Job:
     id: str
     name: str
-    status: str = "laeuft"  # laeuft | fertig | fehler
+    status: str = "laeuft"  # laeuft | fertig | fehler | abgebrochen
     fortschritt: float = 0.0
     meldung: str = ""
     fehler: str | None = None
     ergebnis: Any = None
     gestartet: float = field(default_factory=time.time)
     beendet: float | None = None
+    abbruch: threading.Event = field(default_factory=threading.Event)
 
     def as_dict(self) -> dict:
         return {
@@ -48,6 +58,8 @@ class JobManager:
             self._jobs[job.id] = job
 
         def progress(fraction: float, meldung: str = "") -> None:
+            if job.abbruch.is_set():
+                raise JobAbgebrochen()
             job.fortschritt = max(0.0, min(1.0, float(fraction)))
             if meldung:
                 job.meldung = meldung
@@ -57,6 +69,9 @@ class JobManager:
                 job.ergebnis = fn(progress)
                 job.status = "fertig"
                 job.fortschritt = 1.0
+            except JobAbgebrochen:
+                job.status = "abgebrochen"
+                job.meldung = "abgebrochen"
             except Exception as exc:  # noqa: BLE001 - Fehler ans Dashboard melden
                 job.status = "fehler"
                 job.fehler = f"{type(exc).__name__}: {exc}"
@@ -85,6 +100,15 @@ class JobManager:
                 if job.status == "laeuft":
                     return job
         return None
+
+    def cancel(self, job_id: str) -> Job | None:
+        """Abbruch anfordern; greift beim nächsten Fortschritts-Checkpoint
+        (laufende ffmpeg-Prozesse werden dabei beendet)."""
+        job = self.get(job_id)
+        if job is not None and job.status == "laeuft":
+            job.abbruch.set()
+            job.meldung = "Abbruch angefordert …"
+        return job
 
 
 MANAGER = JobManager()

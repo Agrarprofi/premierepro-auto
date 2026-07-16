@@ -9,8 +9,8 @@ import json
 import traceback
 from typing import Callable
 
-from . import (broll, claude_client, config, cutting, fcpxml, ingest, music,
-               paths, subtitles, sync_audio, transcribe)
+from . import (broll, claude_client, config, cutting, fcpxml, ingest, jobs,
+               music, paths, subtitles, sync_audio, transcribe)
 
 STATUS_FILE = "status.json"
 LOG_FILE = "log.txt"
@@ -218,6 +218,8 @@ def run_all(project: str, progress=None, fortsetzen: bool = True,
         try:
             results[step] = run_step(project, step, progress=sub_progress,
                                      **kwargs)
+        except jobs.JobAbgebrochen:
+            raise  # Nutzer-Abbruch geht IMMER durch, auch bei B-Roll & Co.
         except Exception as exc:  # noqa: BLE001 - optionale Schritte tolerieren
             if step not in OPTIONAL_STEPS:
                 raise
@@ -271,6 +273,9 @@ def run_batch(projects: list[str], progress=None, fortsetzen: bool = True,
                           if str(d).startswith("FEHLER")]
                 results[name] = ("fertig" if not fehler else
                                  "fertig – übersprungen: " + ", ".join(fehler))
+            except jobs.JobAbgebrochen:
+                log(name, "Warteschlange: vom Nutzer abgebrochen")
+                raise  # bricht die GANZE Warteschlange ab
             except Exception as exc:  # noqa: BLE001 - Nacht-Modus: weiter!
                 results[name] = f"FEHLER: {type(exc).__name__}: {exc}"
                 log(name, f"Warteschlange: Projekt abgebrochen – {exc}")

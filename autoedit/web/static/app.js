@@ -176,6 +176,9 @@ function renderFiles() {
           vfr = ` <span class="muted" title="Original hat variable Framerate; für Vorschau und Export wird die automatisch erzeugte CFR-Kopie verwendet">✓ VFR→CFR</span>`;
         } else if (info?.cfr_fehler) {
           vfr = ` <span title="Variable Framerate erkannt, Wandlung nach CFR fehlgeschlagen – Ingest neu ausführen. ${info.cfr_fehler.replace(/"/g, "'")}">⚠️ VFR</span>`;
+        } else if (info?.breite && role !== "audio_dji") {
+          vfr = ` <button class="mini-cfr" data-rel="input/${role}/${f.name}"
+            title="Datei manuell nach konstanter Framerate wandeln – falls das Bild dieser Kamera trotz allem gegen den Ton driftet">→ CFR</button>`;
         }
         const extra = info
           ? ` <span class="muted">${info.dauer.toFixed(1)}s` +
@@ -186,6 +189,10 @@ function renderFiles() {
       }).join("") + "</ul>";
     div.appendChild(box);
   }
+  div.querySelectorAll(".mini-cfr").forEach(btn => {
+    btn.onclick = () => startJob(`/api/projects/${currentProject}/cfr`,
+      { relpfad: btn.dataset.rel });
+  });
 }
 
 function renderSkript() {
@@ -424,9 +431,14 @@ async function pollJob(job, onDone, elSel = "#job-status") {
   el.className = "job";
   el.innerHTML = `<div class="head"><b>${isBatch ? "Warteschlange"
         : job.name.split(":").pop()}</b>
-      <span class="pct">0 %</span> · <span class="elapsed muted">0:00 min</span></div>
+      <span class="pct">0 %</span> · <span class="elapsed muted">0:00 min</span>
+      <button class="cancel" title="Job abbrechen – danach kannst du anpassen und neu starten">✖</button></div>
     <div class="bar"><div></div></div>
     <div class="msg muted"></div>`;
+  $(".cancel", el).onclick = async () => {
+    try { await api(`/api/jobs/${job.id}/cancel`, { method: "POST" }); }
+    catch (e) { /* Job evtl. schon fertig */ }
+  };
   const timer = setInterval(async () => {
     try {
       const j = await api(`/api/jobs/${job.id}`);
@@ -439,9 +451,13 @@ async function pollJob(job, onDone, elSel = "#job-status") {
       if (j.status !== "laeuft") {
         clearInterval(timer);
         pollingJobId = null;
+        $(".cancel", el)?.remove();
         if (j.status === "fehler") {
           el.classList.add("fehler");
           $(".msg", el).textContent = j.fehler;
+        } else if (j.status === "abgebrochen") {
+          $(".msg", el).textContent =
+            "⏹ abgebrochen – anpassen und neu starten";
         } else {
           $(".pct", el).textContent = "100 %";
           $(".bar > div", el).style.width = "100%";

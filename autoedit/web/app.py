@@ -147,6 +147,15 @@ def get_job(job_id: str) -> dict:
     return job.as_dict()
 
 
+@app.post("/api/jobs/{job_id}/cancel")
+def cancel_job(job_id: str) -> dict:
+    """Laufenden Job abbrechen (greift beim nächsten Checkpoint)."""
+    job = jobs.MANAGER.cancel(job_id)
+    if job is None:
+        raise HTTPException(404, "Job nicht gefunden")
+    return job.as_dict()
+
+
 @app.get("/api/projects/{name}/jobs/running")
 def running_job(name: str) -> dict:
     """Laufender Job des Projekts (fürs Wiederanheften der
@@ -225,6 +234,23 @@ def run_all(name: str, body: StepOptions | None = None) -> dict:
                                 modus=opts.modus, skript=opts.skript)
 
     return _start_job(name, "run_all", runner)
+
+
+class CfrRequest(BaseModel):
+    relpfad: str
+
+
+@app.post("/api/projects/{name}/cfr")
+def convert_cfr(name: str, body: CfrRequest) -> dict:
+    """Eine Datei manuell nach CFR wandeln (Knopf in der Dateiliste)."""
+    _project_or_404(name)
+
+    def runner(progress):
+        clip = ingest.force_cfr(name, body.relpfad, progress=progress)
+        return {"cfr_pfad": clip.get("cfr_pfad")}
+
+    basename = Path(body.relpfad).name
+    return _start_job(name, f"cfr_{basename}", runner)
 
 
 # ------------------------------------------------------------ Transkript

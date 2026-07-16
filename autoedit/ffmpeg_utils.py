@@ -65,6 +65,10 @@ def run_ffmpeg_progress(args: list[str], dauer: float, cb=None,
     except subprocess.TimeoutExpired:
         proc.kill()
         raise FfmpegError(f"ffmpeg-Timeout nach {timeout} s")
+    except BaseException:
+        # z.B. Job-Abbruch aus dem Callback: ffmpeg nicht weiterlaufen lassen
+        proc.kill()
+        raise
     if proc.returncode != 0:
         tail = (proc.stderr.read() if proc.stderr else "").strip()[-2000:]
         raise FfmpegError(f"Kommando fehlgeschlagen (ffmpeg):\n{tail}")
@@ -110,13 +114,47 @@ def nearest_standard_fps(fps: float) -> tuple[float, str]:
     return min(STANDARD_FPS, key=lambda s: abs(s[0] - fps))
 
 
+_ENCODER_CACHE: str | None = None
+
+
+def _video_encoder() -> str:
+    """Schnellsten verfügbaren H.264-Encoder wählen: auf dem Mac die
+    Hardware (VideoToolbox, ~10x schneller bei 4K), sonst libx264."""
+    global _ENCODER_CACHE
+    if _ENCODER_CACHE is None:
+        _ENCODER_CACHE = "libx264"
+        import platform
+        if platform.system() == "Darwin":
+            try:
+                if "h264_videotoolbox" in run(["ffmpeg", "-hide_banner",
+                                               "-encoders"]):
+                    _ENCODER_CACHE = "h264_videotoolbox"
+            except FfmpegError:
+                pass
+    return _ENCODER_CACHE
+
+
+def _encoder_args(breite: int | None, hoehe: int | None,
+                  fps: float | None) -> list[str]:
+    if _video_encoder() == "h264_videotoolbox":
+        # Hardware-Encoder kennt kein CRF: Bitrate großzügig nach
+        # Auflösung/Framerate (~0.09 bit/Pixel), 8-80 MBit/s
+        pixel_rate = (breite or 1920) * (hoehe or 1080) * (fps or 25.0)
+        bitrate = int(max(8e6, min(80e6, pixel_rate * 0.09)))
+        return ["-c:v", "h264_videotoolbox", "-b:v", str(bitrate)]
+    return ["-c:v", "libx264", "-preset", "fast", "-crf", "16"]
+
+
 def convert_to_cfr(src: Path | str, dst: Path | str, fps_bruch: str,
-                   dauer: float = 0.0, progress=None) -> Path:
+                   dauer: float = 0.0, progress=None,
+                   breite: int | None = None, hoehe: int | None = None,
+                   fps: float | None = None) -> Path:
     """VFR-Datei nach konstanter Framerate wandeln.
 
-    Video wird neu kodiert (CRF 16 = visuell verlustfrei), der Ton wird
-    1:1 KOPIERT - Bild und Ton der Datei bleiben dadurch fest verbunden
-    und die Audio-Sync-Offsets gelten unverändert.
+    Video wird neu kodiert (visuell verlustfrei; auf dem Mac per
+    Hardware-Encoder), der Ton wird 1:1 KOPIERT - Bild und Ton der Datei
+    bleiben dadurch fest verbunden und die Audio-Sync-Offsets gelten
+    unverändert.
 
     dauer + progress: Quelldauer in Sekunden und Callback cb(frac 0..1)
     für die Fortschrittsanzeige während der (langen) Kodierung.
@@ -128,7 +166,7 @@ def convert_to_cfr(src: Path | str, dst: Path | str, fps_bruch: str,
         run_ffmpeg_progress([
             "-y", "-v", "error", "-i", str(src),
             "-vf", f"fps={fps_bruch}",
-            "-c:v", "libx264", "-preset", "fast", "-crf", "16",
+            *_encoder_args(breite, hoehe, fps),
             "-c:a", "copy",
             "-movflags", "+faststart", str(tmp),
         ], dauer, progress)
@@ -176,16 +214,24 @@ def media_info(path: Path | str) -> dict:
             fps_avg = parse_fps(stream.get("avg_frame_rate"))
             fps_r = parse_fps(stream.get("r_frame_rate"))
             info["fps"] = fps_avg or fps_r
-            # Variable Framerate: avg- und r-Rate weichen ab. Frame-Index
-            # und Zeit laufen dann in Premiere auseinander -> Bild-Desync.
-            info["vfr_verdacht"] = bool(
-                fps_avg and fps_r
-                and abs(fps_avg - fps_r) / max(fps_avg, fps_r) > 0.005
-            )
             info["video_codec"] = stream.get("codec_name")
             video_start = _start_time(stream)
             if not info["dauer"] and stream.get("duration"):
                 info["dauer"] = float(stream["duration"])
+            # Variable Framerate: entscheidend ist der AUFSUMMIERTE Versatz
+            # über die Dateilänge, nicht die relative Abweichung. Beispiel:
+            # 99.97 statt 100 fps klingt harmlos (0.03%), sind bei 830 s
+            # aber ~25 fehlende Frames = 0.25 s Bild-Drift am Dateiende -
+            # Premiere nummeriert stur durch, der Ton bleibt richtig.
+            if fps_avg:
+                nominal = nearest_standard_fps(fps_avg)[0]
+                drift = (info["dauer"] or 0.0) * abs(fps_avg - nominal) / nominal
+                rel = (abs(fps_avg - fps_r) / max(fps_avg, fps_r)
+                       if fps_r else 0.0)
+                info["vfr_drift_sek"] = round(drift, 3)
+                info["vfr_verdacht"] = rel > 0.005 or drift > 0.05
+            else:
+                info["vfr_verdacht"] = False
         elif stream.get("codec_type") == "audio" and info["audio_kanaele"] is None:
             info["audio_kanaele"] = stream.get("channels")
             info["audio_samplerate"] = int(stream.get("sample_rate", 0) or 0) or None

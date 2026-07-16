@@ -42,6 +42,11 @@ def scan_project(project: str, progress=None) -> dict:
         for f in clips_for_role(project, role):
             all_files.append((role, f))
 
+    # Manuell erzwungene CFR-Wandlungen aus dem letzten Scan übernehmen
+    vorher = load_media_info(project) or {}
+    erzwungen = {c["relpfad"] for c in vorher.get("clips", [])
+                 if c.get("cfr_erzwungen")}
+
     clips = []
     for i, (role, f) in enumerate(all_files):
         if progress:
@@ -50,10 +55,13 @@ def scan_project(project: str, progress=None) -> dict:
         info["rolle"] = role
         info["name"] = f.name
         info["relpfad"] = str(f.relative_to(paths.project_dir(project)))
-        if info.get("vfr_verdacht") and role in CFR_ROLLEN:
+        if role in CFR_ROLLEN and (info.get("vfr_verdacht")
+                                   or info["relpfad"] in erzwungen):
             n = max(1, len(all_files))
             info = _ensure_cfr(project, f, info, progress=progress,
                                frac0=i / n, frac1=(i + 1) / n)
+            if info["relpfad"] in erzwungen:
+                info["cfr_erzwungen"] = True
         clips.append(info)
 
     result = {"projekt": project, "clips": clips}
@@ -90,7 +98,10 @@ def _ensure_cfr(project: str, src: Path, info: dict, progress=None,
 
         try:
             ffmpeg_utils.convert_to_cfr(src, dst, fps_bruch,
-                                        dauer=info["dauer"], progress=_cb)
+                                        dauer=info["dauer"], progress=_cb,
+                                        breite=info.get("breite"),
+                                        hoehe=info.get("hoehe"),
+                                        fps=info.get("fps"))
         except ffmpeg_utils.FfmpegError as exc:
             info["cfr_fehler"] = str(exc)[-300:]
             return info
@@ -100,6 +111,34 @@ def _ensure_cfr(project: str, src: Path, info: dict, progress=None,
     neu["vfr_original"] = True
     neu["cfr_pfad"] = str(dst.relative_to(paths.project_dir(project)))
     return neu
+
+
+def force_cfr(project: str, relpfad: str, progress=None) -> dict:
+    """Eine Datei auf Nutzerwunsch nach CFR wandeln (Dashboard-Knopf
+    "→ CFR"), auch wenn die automatische Erkennung nicht angeschlagen
+    hat. Die Entscheidung übersteht erneute Ingest-Läufe."""
+    media = load_media_info(project)
+    if media is None:
+        raise RuntimeError("Erst Ingest ausführen.")
+    src = paths.project_dir(project) / relpfad
+    if not src.is_file():
+        raise KeyError(f"Datei nicht gefunden: {relpfad}")
+    for i, clip in enumerate(media["clips"]):
+        if clip["relpfad"] != relpfad:
+            continue
+        if clip["rolle"] not in CFR_ROLLEN:
+            raise RuntimeError("CFR-Wandlung gibt es nur für Videodateien.")
+        neu = _ensure_cfr(project, src, dict(clip), progress=progress)
+        if "cfr_pfad" not in neu:
+            raise RuntimeError(
+                f"Wandlung fehlgeschlagen: {neu.get('cfr_fehler', '?')}")
+        neu["cfr_erzwungen"] = True
+        media["clips"][i] = neu
+        (paths.output_dir(project) / MEDIA_INFO_FILE).write_text(
+            json.dumps(media, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        return neu
+    raise KeyError(f"Unbekannte Datei: {relpfad}")
 
 
 def clip_datei(project: str, clip: dict) -> Path:
