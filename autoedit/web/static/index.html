@@ -115,7 +115,9 @@
         <textarea name="schnitt_hinweise" rows="2"></textarea></label>
     </form>
     <div class="row">
-      <button id="btn-save-config">Speichern</button>
+      <button id="btn-save-config"
+        title="Änderungen speichern sich automatisch – der Knopf ist nur zum sofortigen Sichern">Speichern</button>
+      <span id="config-status" class="muted"></span>
       <select id="preset-select"><option value="">Preset wählen…</option></select>
       <button id="btn-apply-preset">Preset anwenden</button>
       <button id="btn-delete-preset" class="danger"

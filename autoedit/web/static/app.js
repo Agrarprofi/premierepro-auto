@@ -186,6 +186,7 @@ function renderStatusChain() {
 }
 
 function renderConfig() {
+  if (configDirty) return;  // ungespeicherte Eingaben nicht überschreiben
   const form = $("#config-form");
   for (const [key, val] of Object.entries(overview.config)) {
     const input = form.elements[key];
@@ -252,6 +253,48 @@ function renderFiles() {
 
 let skriptGespeichert = null;   // letzter gespeicherter Stand
 let skriptTimer = null;
+
+// -------------------------------------------- Konfiguration speichern
+
+let configDirty = false;
+let configTimer = null;
+
+function configUpdates() {
+  const form = $("#config-form");
+  return {
+    reel_laenge_sek: Number(form.elements.reel_laenge_sek.value),
+    broll_dauer_sek: Number(form.elements.broll_dauer_sek.value),
+    broll_ziel_anzahl: Number(form.elements.broll_ziel_anzahl.value),
+    broll_min_abstand_sek: Number(form.elements.broll_min_abstand_sek.value),
+    pausen_schnitt_sek: Number(form.elements.pausen_schnitt_sek.value),
+    sprache: form.elements.sprache.value,
+    export_format: form.elements.export_format.value,
+    sequenz_fps: Number(form.elements.sequenz_fps.value),
+    zoom_modus: form.elements.zoom_modus.value,
+    zoom_staerke_prozent: Number(form.elements.zoom_staerke_prozent.value),
+    musik_aktiv: form.elements.musik_aktiv.checked,
+    untertitel_aktiv: form.elements.untertitel_aktiv.checked,
+    claude_modell: form.elements.claude_modell.value,
+    whisper_modell: form.elements.whisper_modell.value,
+    schnitt_hinweise: form.elements.schnitt_hinweise.value,
+  };
+}
+
+async function saveConfig(leise = true) {
+  if (!currentProject || !$("#config-form")) return;
+  clearTimeout(configTimer);
+  configDirty = false;
+  const st = $("#config-status");
+  try {
+    overview.config = await api(`/api/projects/${currentProject}/config`,
+      { method: "PUT", body: JSON.stringify(configUpdates()) });
+    if (st) st.textContent = "💾 gespeichert";
+  } catch (e) {
+    configDirty = true;
+    if (st) st.textContent = `⚠ ${e.message}`;
+    if (!leise) alert(e.message);
+  }
+}
 
 function renderSkript() {
   const hint = $("#skript-hint");
@@ -595,6 +638,7 @@ async function attachRunningBatch() {
 
 async function startJob(path, body, onDone) {
   try {
+    if (configDirty) await saveConfig();  // Formularstand sichern
     const job = await api(path, { method: "POST",
       body: body ? JSON.stringify(body) : "{}" });
     pollJob(job, onDone);
@@ -627,31 +671,18 @@ function bindProjectEvents() {
       { ...cutBody(), fortsetzen: false });
   };
 
-  $("#btn-save-config").onclick = async () => {
-    const form = $("#config-form");
-    const updates = {
-      reel_laenge_sek: Number(form.elements.reel_laenge_sek.value),
-      broll_dauer_sek: Number(form.elements.broll_dauer_sek.value),
-      broll_ziel_anzahl: Number(form.elements.broll_ziel_anzahl.value),
-      broll_min_abstand_sek: Number(form.elements.broll_min_abstand_sek.value),
-      pausen_schnitt_sek: Number(form.elements.pausen_schnitt_sek.value),
-      sprache: form.elements.sprache.value,
-      export_format: form.elements.export_format.value,
-      sequenz_fps: Number(form.elements.sequenz_fps.value),
-      zoom_modus: form.elements.zoom_modus.value,
-      zoom_staerke_prozent: Number(form.elements.zoom_staerke_prozent.value),
-      musik_aktiv: form.elements.musik_aktiv.checked,
-      untertitel_aktiv: form.elements.untertitel_aktiv.checked,
-      claude_modell: form.elements.claude_modell.value,
-      whisper_modell: form.elements.whisper_modell.value,
-      schnitt_hinweise: form.elements.schnitt_hinweise.value,
-    };
-    try {
-      await api(`/api/projects/${currentProject}/config`,
-        { method: "PUT", body: JSON.stringify(updates) });
-      refreshOverview();
-    } catch (e) { alert(e.message); }
+  $("#btn-save-config").onclick = () => saveConfig(false);
+  // Auto-Speichern beim Ändern: nie wieder Werte verlieren, weil
+  // "Speichern" vergessen wurde (Preset speichert sonst alte Werte,
+  // nach Reload wirkt die Config "zurückgesetzt")
+  const configChanged = () => {
+    configDirty = true;
+    $("#config-status").textContent = "…";
+    clearTimeout(configTimer);
+    configTimer = setTimeout(saveConfig, 800);
   };
+  $("#config-form").oninput = configChanged;
+  $("#config-form").onchange = configChanged;
 
   // Auswahl befüllt das Namensfeld vor: Config anpassen + "Als Preset
   // speichern" überschreibt dann genau dieses Preset (= Ändern)
@@ -677,9 +708,11 @@ function bindProjectEvents() {
   $("#btn-save-preset").onclick = async () => {
     const name = $("#preset-name").value.trim();
     if (!name) return alert("Preset-Name eingeben");
+    await saveConfig(false);  // Preset = AKTUELLER Formularstand
     await api("/api/presets", { method: "POST",
       body: JSON.stringify({ name, projekt: currentProject }) });
     loadPresets();
+    $("#config-status").textContent = `💾 Preset „${name}" gespeichert`;
   };
 
   $("#btn-transcribe").onclick = () => runStep("transkript");

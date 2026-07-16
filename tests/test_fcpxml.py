@@ -494,3 +494,17 @@ def test_sequenz_rate_aus_config(projekt, fake_claude):
     f.write_text(json.dumps(media, ensure_ascii=False), encoding="utf-8")
     timeline = fcpxml.build_timeline(projekt)
     assert any("passt nicht zur Sequenz" in w for w in timeline["warnungen"])
+
+
+def test_export_warns_on_missing_file(projekt, fake_claude):
+    """Referenzierte Datei wurde nach dem Matching gelöscht/verschoben ->
+    der Export warnt, statt stumm einen Offline-Clip zu erzeugen."""
+    prepared_project(projekt, fake_claude, with_broll=True)
+    timeline = fcpxml.build_timeline(projekt)
+    assert not any("fehlt auf der Platte" in w for w in timeline["warnungen"])
+
+    (paths.project_dir(projekt) / "input/broll/broll_traktor.mp4").unlink()
+    timeline = fcpxml.build_timeline(projekt)
+    treffer = [w for w in timeline["warnungen"] if "fehlt auf der Platte" in w]
+    assert len(treffer) == 1
+    assert "broll_traktor.mp4" in treffer[0]

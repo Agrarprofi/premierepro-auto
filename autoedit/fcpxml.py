@@ -281,6 +281,17 @@ def build_timeline(project: str) -> dict:
             else:
                 warnungen.append(f"Musikdatei nicht gefunden: {mpath}")
 
+    # Fehlende Dateien SOFORT melden - in Premiere wären das stumme
+    # "Medien offline"-Clips (gestreift, spielen nichts ab).
+    fehlend = sorted({ev["datei"] for spur in tracks.values() for ev in spur
+                      if not Path(ev["datei"]).is_file()})
+    for datei in fehlend:
+        warnungen.append(
+            f"Datei fehlt auf der Platte: {datei} – der Clip wäre in "
+            "Premiere offline (gestreift). Datei zurücklegen oder "
+            "B-Roll/Ingest neu ausführen."
+        )
+
     timeline = {
         "projekt": project,
         "name": f"{project}_reel",
