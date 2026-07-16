@@ -113,12 +113,18 @@ function renderFiles() {
     box.innerHTML = `<h4>${label} (${files.length})</h4><ul>` +
       files.map(f => {
         const info = infos.find(c => c.name === f.name);
+        let vfr = "";
+        if (info?.vfr_original) {
+          vfr = ` <span class="muted" title="Original hat variable Framerate; für Vorschau und Export wird die automatisch erzeugte CFR-Kopie verwendet">✓ VFR→CFR</span>`;
+        } else if (info?.cfr_fehler) {
+          vfr = ` <span title="Variable Framerate erkannt, Wandlung nach CFR fehlgeschlagen – Ingest neu ausführen. ${info.cfr_fehler.replace(/"/g, "'")}">⚠️ VFR</span>`;
+        }
         const extra = info
           ? ` <span class="muted">${info.dauer.toFixed(1)}s` +
             (info.breite ? `, ${info.breite}×${info.hoehe}@${(info.fps || 0).toFixed(2)}` : "") +
             `</span>`
           : "";
-        return `<li>${f.name}${extra}</li>`;
+        return `<li>${f.name}${extra}${vfr}</li>`;
       }).join("") + "</ul>";
     div.appendChild(box);
   }

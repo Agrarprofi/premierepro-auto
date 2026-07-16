@@ -66,6 +66,14 @@ projects/<projektname>/
 Kamera). Die Sync-Referenz ist die erste DJI-Datei; fehlt DJI-Audio, wird
 die Tonspur von Kamera A verwendet.
 
+**Variable Framerate (VFR):** Dateien mit variabler Framerate (Handys,
+manche Kameras) erkennt der Ingest automatisch und wandelt sie einmalig
+nach konstanter Framerate (`output/cfr/…`, Video visuell verlustfrei neu
+kodiert, Ton 1:1 kopiert). Vorschau und Premiere-Export verwenden dann die
+CFR-Kopie – Bild und Ton bleiben so fest verbunden, in Premiere driftet
+nichts. Die Wandlung kann bei langen Clips einige Minuten dauern und läuft
+nur beim ersten Ingest (danach gecacht).
+
 ## config.yaml
 
 ```yaml

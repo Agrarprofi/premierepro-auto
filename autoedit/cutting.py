@@ -552,7 +552,7 @@ def render_cut_preview(project: str, progress=None) -> Path:
             ffmpeg_utils.run([
                 "ffmpeg", "-y", "-v", "error",
                 "-ss", f"{p['src_in']:.3f}", "-t", f"{p['dauer']:.3f}",
-                "-i", str(base / p["clip"]["relpfad"]),
+                "-i", str(ingest.clip_datei(project, p["clip"])),
                 "-ss", f"{ref_start:.3f}", "-t", f"{p['dauer']:.3f}",
                 "-i", str(ref_path),
                 "-map", "0:v:0", "-map", "1:a:0",

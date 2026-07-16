@@ -90,7 +90,8 @@ def _apply_av_versatz(ev: dict, clip: dict, warnungen: list[str]) -> None:
 def _event_from_clip(base: Path, clip: dict, timeline_start: float, dauer: float,
                      src_in: float, **extra) -> dict:
     return {
-        "datei": str(base / clip["relpfad"]),
+        # CFR-Kopie verwenden, falls das Original variable Framerate hatte
+        "datei": str(base / (clip.get("cfr_pfad") or clip["relpfad"])),
         "name": clip["name"],
         "timeline_start": round(timeline_start, 6),
         "dauer": round(dauer, 6),
@@ -177,9 +178,11 @@ def build_timeline(project: str) -> dict:
                         [w.split(" ", 1)[0] for w in warnungen]:
                     warnungen.append(
                         f"{clip['relpfad']} hat vermutlich VARIABLE Framerate "
-                        "– Frame-Positionen driften in Premiere. Datei nach "
-                        "CFR wandeln (z.B. HandBrake) oder Bild-Korrektur in "
-                        "der Sync-Tabelle nutzen."
+                        "und wurde noch nicht nach CFR gewandelt – Bild "
+                        "driftet in Premiere. Ingest neu ausführen (wandelt "
+                        "automatisch)"
+                        + (f"; letzter Fehler: {clip['cfr_fehler']}"
+                           if clip.get("cfr_fehler") else ".")
                     )
                 tracks[vtrack].append(ev)
                 if atrack and clip.get("audio_kanaele"):

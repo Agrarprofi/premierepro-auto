@@ -320,3 +320,39 @@ def test_export_warns_on_vfr(projekt, fake_claude):
     vfr = [w for w in timeline["warnungen"] if "VARIABLE Framerate" in w]
     assert len(vfr) == 1
     assert vfr[0].startswith("input/cam_b/cam_b_001.mp4")
+
+
+def test_timeline_uses_cfr_copy(projekt, fake_claude):
+    """Hat eine Datei eine CFR-Kopie, zeigen alle Export-Events (Bild UND
+    Ton) auf die Kopie statt auf das VFR-Original."""
+    import json
+    import shutil
+
+    prepared_project(projekt, fake_claude, with_broll=False)
+
+    # CFR-Kopie simulieren (inhaltlich identische Datei genügt)
+    base = paths.project_dir(projekt)
+    cfr_rel = "output/cfr/cam_b/cam_b_001.mp4"
+    (base / cfr_rel).parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(base / "input/cam_b/cam_b_001.mp4", base / cfr_rel)
+
+    info_file = paths.output_dir(projekt) / "media_info.json"
+    media = json.loads(info_file.read_text(encoding="utf-8"))
+    for clip in media["clips"]:
+        if clip["relpfad"] == "input/cam_b/cam_b_001.mp4":
+            clip["cfr_pfad"] = cfr_rel
+            clip["vfr_original"] = True
+    info_file.write_text(json.dumps(media, ensure_ascii=False),
+                         encoding="utf-8")
+
+    timeline = fcpxml.build_timeline(projekt)
+    for ev in timeline["tracks"]["V2"]:
+        assert ev["datei"].endswith(cfr_rel)
+    for ev in timeline["tracks"]["V1"]:          # Kamera A unverändert
+        assert ev["datei"].endswith("input/cam_a/cam_a_001.mov")
+    # keine VFR-Warnung, die Datei ist ja gewandelt
+    assert not any("VARIABLE Framerate" in w for w in timeline["warnungen"])
+
+    # und die XML referenziert die Kopie
+    out = fcpxml.generate_fcpxml(projekt)
+    assert "output/cfr/cam_b/cam_b_001.mp4" in out.read_text(encoding="utf-8")

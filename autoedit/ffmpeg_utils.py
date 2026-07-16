@@ -66,6 +66,47 @@ def parse_fps(rate: str | None) -> float | None:
     return float(frac)
 
 
+# Übliche Aufnahme-Framerates; VFR-Material wird auf die nächstliegende
+# gewandelt. NTSC-Raten als exakte Brüche, damit der fps-Filter und
+# Premiere dieselbe Rate sehen.
+STANDARD_FPS: list[tuple[float, str]] = [
+    (23.976, "24000/1001"), (24.0, "24"), (25.0, "25"),
+    (29.97, "30000/1001"), (30.0, "30"), (48.0, "48"), (50.0, "50"),
+    (59.94, "60000/1001"), (60.0, "60"), (100.0, "100"),
+    (119.88, "120000/1001"), (120.0, "120"),
+]
+
+
+def nearest_standard_fps(fps: float) -> tuple[float, str]:
+    """(float, ffmpeg-Bruch) der nächstliegenden Standard-Framerate."""
+    return min(STANDARD_FPS, key=lambda s: abs(s[0] - fps))
+
+
+def convert_to_cfr(src: Path | str, dst: Path | str, fps_bruch: str) -> Path:
+    """VFR-Datei nach konstanter Framerate wandeln.
+
+    Video wird neu kodiert (CRF 16 = visuell verlustfrei), der Ton wird
+    1:1 KOPIERT - Bild und Ton der Datei bleiben dadurch fest verbunden
+    und die Audio-Sync-Offsets gelten unverändert.
+    """
+    src, dst = Path(src), Path(dst)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dst.with_name(dst.stem + ".tmp" + dst.suffix)
+    try:
+        run([
+            "ffmpeg", "-y", "-v", "error", "-i", str(src),
+            "-vf", f"fps={fps_bruch}",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "16",
+            "-c:a", "copy",
+            "-movflags", "+faststart", str(tmp),
+        ], timeout=7200)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    tmp.replace(dst)
+    return dst
+
+
 def media_info(path: Path | str) -> dict:
     """Kompakte Medieninfo für eine Datei (Dauer, Auflösung, fps, Audio)."""
     data = ffprobe_json(path)

@@ -11,6 +11,9 @@ VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".mxf"}
 AUDIO_EXTS = {".wav", ".mp3", ".m4a", ".aif", ".aiff", ".flac"}
 
 MEDIA_INFO_FILE = "media_info.json"
+CFR_DIR = "cfr"
+# Rollen, deren Bild in Premiere landet - nur dort ist VFR ein Problem
+CFR_ROLLEN = {"cam_a", "cam_b", "broll"}
 
 
 def _iter_media(folder: Path, exts: set[str]) -> list[Path]:
@@ -47,6 +50,10 @@ def scan_project(project: str, progress=None) -> dict:
         info["rolle"] = role
         info["name"] = f.name
         info["relpfad"] = str(f.relative_to(paths.project_dir(project)))
+        if info.get("vfr_verdacht") and role in CFR_ROLLEN:
+            info = _ensure_cfr(project, f, info,
+                               progress=progress,
+                               frac=i / max(1, len(all_files)))
         clips.append(info)
 
     result = {"projekt": project, "clips": clips}
@@ -56,6 +63,40 @@ def scan_project(project: str, progress=None) -> dict:
         json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8"
     )
     return result
+
+
+def _ensure_cfr(project: str, src: Path, info: dict,
+                progress=None, frac: float = 0.0) -> dict:
+    """VFR-Datei einmalig nach CFR wandeln und die Medieninfo der Kopie
+    übernehmen. Alle weiteren Schritte (Vorschau, Export) nutzen dann die
+    CFR-Kopie - Bild und Ton bleiben in Premiere fest verbunden.
+
+    Schlägt die Wandlung fehl, bleibt das Original mit `cfr_fehler`
+    markiert; der Export warnt dann.
+    """
+    fps_f, fps_bruch = ffmpeg_utils.nearest_standard_fps(info["fps"] or 25.0)
+    dst = paths.output_dir(project) / CFR_DIR / info["rolle"] / src.name
+    if not dst.is_file() or dst.stat().st_mtime < src.stat().st_mtime:
+        if progress:
+            progress(frac, f"{src.name}: variable Framerate erkannt – "
+                           f"wandle nach {fps_f:g} fps (kann dauern)")
+        try:
+            ffmpeg_utils.convert_to_cfr(src, dst, fps_bruch)
+        except ffmpeg_utils.FfmpegError as exc:
+            info["cfr_fehler"] = str(exc)[-300:]
+            return info
+    neu = ffmpeg_utils.media_info(dst)
+    for key in ("rolle", "name", "relpfad"):
+        neu[key] = info[key]
+    neu["vfr_original"] = True
+    neu["cfr_pfad"] = str(dst.relative_to(paths.project_dir(project)))
+    return neu
+
+
+def clip_datei(project: str, clip: dict) -> Path:
+    """Absoluter Pfad der tatsächlich zu verwendenden Datei
+    (CFR-Kopie, falls das Original variable Framerate hatte)."""
+    return paths.project_dir(project) / (clip.get("cfr_pfad") or clip["relpfad"])
 
 
 def load_media_info(project: str) -> dict | None:

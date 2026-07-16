@@ -81,6 +81,19 @@ def make_broll(path: Path, dur: float = 8.0, pattern: str = "testsrc2",
     ])
 
 
+def make_vfr(src: Path, dst: Path) -> None:
+    """VFR-Variante einer Datei: Frames unregelmäßig verwerfen (Muster
+    2 behalten / 3 verwerfen), Timestamps beibehalten, Audio 1:1 kopieren –
+    ffprobe meldet dann avg_frame_rate << r_frame_rate wie bei echtem
+    VFR-Material."""
+    _run([
+        "ffmpeg", "-y", "-v", "error", "-i", str(src),
+        "-vf", "select='lt(mod(n,5),2)'", "-fps_mode", "vfr",
+        "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+        "-c:a", "copy", str(dst),
+    ])
+
+
 def make_music(path: Path, freq: int, dur: float = 20.0) -> None:
     _run([
         "ffmpeg", "-y", "-v", "error",

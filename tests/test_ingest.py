@@ -1,3 +1,5 @@
+import pytest
+
 from autoedit import ingest, paths
 
 
@@ -33,3 +35,39 @@ def test_scan_ignores_hidden_and_foreign_files(projekt):
     result = ingest.scan_project(projekt)
     names = [c["name"] for c in result["clips"] if c["rolle"] == "cam_a"]
     assert names == ["cam_a_001.mov"]
+
+
+def test_scan_converts_vfr_to_cfr(projekt, media):
+    """VFR-Datei wird beim Ingest automatisch nach CFR gewandelt; alle
+    Zeitangaben in media_info stammen von der Kopie."""
+    from autoedit import ffmpeg_utils
+    from tests.conftest import make_vfr
+
+    cam_dir = paths.input_dir(projekt, "cam_b")
+    make_vfr(media["root"] / "cam_b_001.mp4", cam_dir / "cam_b_vfr.mp4")
+
+    result = ingest.scan_project(projekt)
+    by_name = {c["name"]: c for c in result["clips"]}
+
+    clip = by_name["cam_b_vfr.mp4"]
+    assert clip["vfr_original"] is True
+    assert clip["cfr_pfad"].startswith("output/cfr/cam_b/")
+    assert clip["relpfad"] == "input/cam_b/cam_b_vfr.mp4"
+
+    cfr = ingest.clip_datei(projekt, clip)
+    assert cfr.is_file()
+    info = ffmpeg_utils.media_info(cfr)
+    assert info["vfr_verdacht"] is False          # Kopie ist sauber CFR
+    assert clip["fps"] == pytest.approx(info["fps"])
+    # Ton wurde 1:1 kopiert: Dauer bleibt (im Rahmen der Framerate) gleich
+    assert clip["dauer"] == pytest.approx(22.0, abs=0.5)
+
+    # Saubere Dateien bleiben unangetastet
+    sauber = by_name["cam_b_001.mp4"]
+    assert "cfr_pfad" not in sauber
+    assert ingest.clip_datei(projekt, sauber).name == "cam_b_001.mp4"
+
+    # Zweiter Scan wandelt nicht erneut (Cache über mtime)
+    mtime = cfr.stat().st_mtime
+    ingest.scan_project(projekt)
+    assert cfr.stat().st_mtime == mtime

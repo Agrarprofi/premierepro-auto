@@ -440,7 +440,8 @@ def render_sync_preview(project: str, dauer: float = 10.0,
     out = paths.output_dir(project) / f"preview_sync_{rolle}.mp4"
     ffmpeg_utils.run([
         "ffmpeg", "-y", "-v", "error",
-        "-ss", f"{clip_start:.3f}", "-t", f"{dauer:.3f}", "-i", str(base / clip["relpfad"]),
+        "-ss", f"{clip_start:.3f}", "-t", f"{dauer:.3f}",
+        "-i", str(ingest.clip_datei(project, clip)),
         "-ss", f"{ref_start:.3f}", "-t", f"{dauer:.3f}", "-i", str(ref_path),
         "-map", "0:v:0", "-map", "1:a:0",
         "-vf", "scale=-2:720",
