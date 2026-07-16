@@ -107,6 +107,14 @@ lokalen Schritte nutzen die Hardware voll aus:
   (VideoToolbox) und wandelt mehrere Dateien parallel. Läuft pro Datei
   nur einmal (Cache).
 
+## Projekte löschen (Papierkorb)
+
+Projekte in der Seitenleiste ankreuzen → **„🗑 Angehakte löschen"** →
+Rückfrage bestätigen. Das Projekt wird dabei nur in den Ordner
+`papierkorb/` (neben `projects/`) **verschoben**, nichts wird zerstört.
+Wiederherstellen: Ordner von Hand zurück nach `projects/` schieben.
+Endgültig gelöscht wird erst, wenn du den Papierkorb manuell leerst.
+
 ## Warteschlange (Nacht-Modus)
 
 Mehrere Projekte vorbereiten (Dateien in die input-Ordner, optional

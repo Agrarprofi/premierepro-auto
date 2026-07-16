@@ -29,6 +29,13 @@ def presets_dir() -> Path:
     return Path(os.environ.get("AUTOEDIT_PRESETS", REPO_ROOT / "presets"))
 
 
+def trash_dir() -> Path:
+    """Papierkorb für gelöschte Projekte (neben dem projects/-Ordner);
+    wird vom Nutzer manuell geleert."""
+    return Path(os.environ.get("AUTOEDIT_TRASH",
+                               projects_dir().parent / "papierkorb"))
+
+
 def valid_project_name(name: str) -> bool:
     return bool(name) and bool(_NAME_RE.match(name)) and not name.startswith(".")
 
@@ -70,14 +77,27 @@ def project_exists(name: str) -> bool:
     return valid_project_name(name) and project_dir(name).is_dir()
 
 
-def delete_project(name: str) -> None:
-    """Kompletten Projektordner löschen (inkl. input/ und output/).
+def delete_project(name: str) -> Path:
+    """Projekt in den Papierkorb VERSCHIEBEN (nichts wird zerstört).
 
     project_dir() validiert den Namen - kein Pfad außerhalb von
-    projects/ erreichbar.
+    projects/ erreichbar. Rückgabe: Zielordner im Papierkorb.
+    Wiederherstellen = Ordner von Hand zurück nach projects/ schieben;
+    endgültig löschen = Papierkorb manuell leeren.
     """
     import shutil
+    from datetime import datetime
 
     d = project_dir(name)
-    if d.is_dir():
-        shutil.rmtree(d)
+    trash = trash_dir()
+    trash.mkdir(parents=True, exist_ok=True)
+    ziel = trash / name
+    if ziel.exists():
+        stempel = datetime.now().strftime("%Y%m%d-%H%M%S")
+        ziel = trash / f"{name}_{stempel}"
+        i = 1
+        while ziel.exists():
+            ziel = trash / f"{name}_{stempel}_{i}"
+            i += 1
+    shutil.move(str(d), str(ziel))
+    return ziel

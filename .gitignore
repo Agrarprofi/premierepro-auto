@@ -4,6 +4,7 @@ __pycache__/
 .venv/
 venv/
 projects/
+papierkorb/
 music_library/
 presets/*.yaml
 !presets/.gitkeep

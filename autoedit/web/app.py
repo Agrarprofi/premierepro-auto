@@ -79,15 +79,17 @@ def create_project(body: ProjectCreate) -> dict:
 
 @app.delete("/api/projects/{name}")
 def delete_project(name: str) -> dict:
-    """Projekt unwiderruflich löschen (Frontend fragt vorher nach)."""
+    """Projekt in den Papierkorb verschieben (Frontend fragt vorher nach).
+
+    Der Papierkorb (neben dem projects/-Ordner) wird manuell geleert."""
     _project_or_404(name)
     running = (jobs.MANAGER.running_for(f"{name}:")
                or jobs.MANAGER.running_for("batch:"))
     if running:
         raise HTTPException(
             409, f"Es läuft ein Job ({running.name}) – erst abbrechen.")
-    paths.delete_project(name)
-    return {"geloescht": name}
+    ziel = paths.delete_project(name)
+    return {"geloescht": name, "papierkorb": str(ziel)}
 
 
 @app.get("/api/projects/{name}/config")

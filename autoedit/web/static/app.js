@@ -648,14 +648,18 @@ $("#btn-delete-projects").onclick = async () => {
   }
   const liste = projekte.map(p => `  – ${p}`).join("\n");
   if (!confirm(
-      `${projekte.length} Projekt(e) WIRKLICH löschen?\n\n${liste}\n\n` +
-      "Der komplette Projektordner wird unwiderruflich gelöscht – " +
-      "inklusive aller Dateien in input/ und aller Ergebnisse!")) {
+      `${projekte.length} Projekt(e) wirklich löschen?\n\n${liste}\n\n` +
+      "Die Projekte werden in den Papierkorb-Ordner verschoben " +
+      "(neben dem projects/-Ordner). Wiederherstellen: Ordner von Hand " +
+      "zurückschieben. Endgültig weg sind sie erst, wenn du den " +
+      "Papierkorb manuell leerst.")) {
     return;
   }
+  let ziel = "";
   for (const p of projekte) {
     try {
-      await api(`/api/projects/${p}`, { method: "DELETE" });
+      const r = await api(`/api/projects/${p}`, { method: "DELETE" });
+      ziel = r.papierkorb;
       batchSelection.delete(p);
       if (currentProject === p) {
         currentProject = null;
@@ -663,6 +667,10 @@ $("#btn-delete-projects").onclick = async () => {
           oder neu anlegen.</p>`;
       }
     } catch (e) { alert(`${p}: ${e.message}`); }
+  }
+  if (ziel) {
+    $("#main").insertAdjacentHTML("afterbegin",
+      `<p class="muted">🗑 In den Papierkorb verschoben: <code>${ziel}</code></p>`);
   }
   loadProjects();
 };

@@ -265,15 +265,31 @@ def test_script_save_api(client, projekt):
 
 
 def test_delete_project_api(client, projekt):
+    from pathlib import Path
+
     from autoedit import paths as p
 
     assert p.project_exists(projekt)
     res = client.delete(f"/api/projects/{projekt}")
     assert res.status_code == 200
-    assert res.json()["geloescht"] == projekt
+    data = res.json()
+    assert data["geloescht"] == projekt
     assert not p.project_exists(projekt)
+
+    # Projekt liegt vollständig im Papierkorb (nichts zerstört)
+    ziel = Path(data["papierkorb"])
+    assert ziel.parent == p.trash_dir()
+    assert (ziel / "input/cam_a/cam_a_001.mov").is_file()
+
     # zweites Löschen: Projekt existiert nicht mehr
     assert client.delete(f"/api/projects/{projekt}").status_code == 404
+
+    # Namenskollision im Papierkorb: neues Projekt mit gleichem Namen
+    # löschen -> eigener Eintrag mit Zeitstempel
+    p.create_project(projekt)
+    res = client.delete(f"/api/projects/{projekt}")
+    ziel2 = Path(res.json()["papierkorb"])
+    assert ziel2 != ziel and ziel2.is_dir()
 
 
 def test_delete_project_blocked_while_job_running(client, projekt):
