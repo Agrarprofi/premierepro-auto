@@ -81,8 +81,12 @@ function renderStatusChain() {
     div.className = `step ${st.status}`;
     div.title = st.detail || "";
     div.innerHTML = `<span class="lamp"></span> ${label}
-      <button data-step="${step}" title="Schritt ausführen">▶</button>`;
-    $("button", div).onclick = () => runStep(step);
+      <button class="one" title="Nur diesen Schritt ausführen">▶</button>
+      <button class="from" title="Ab hier bis zum Ende ausführen (Fehler in B-Roll/Untertitel/Musik werden übersprungen)">⏩</button>`;
+    $(".one", div).onclick = () => runStep(step);
+    $(".from", div).onclick = () =>
+      startJob(`/api/projects/${currentProject}/run_all`,
+        { ...cutBody(), ab_schritt: step });
     chain.appendChild(div);
   }
 }

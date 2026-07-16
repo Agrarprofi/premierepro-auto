@@ -151,6 +151,7 @@ class StepOptions(BaseModel):
     modus: str = "auto"          # Schnitt: "auto" | "skript"
     skript: str | None = None
     fortsetzen: bool = True      # run_all: fertige Schritte überspringen
+    ab_schritt: str | None = None  # run_all: ab diesem Schritt bis zum Ende
 
 
 @app.post("/api/projects/{name}/steps/{step}")
@@ -172,9 +173,13 @@ def run_all(name: str, body: StepOptions | None = None) -> dict:
     _project_or_404(name)
     opts = body or StepOptions()
 
+    if opts.ab_schritt is not None and opts.ab_schritt not in pipeline.STEPS:
+        raise HTTPException(400, f"Unbekannter Schritt: {opts.ab_schritt}")
+
     def runner(progress):
         return pipeline.run_all(name, progress=progress,
                                 fortsetzen=opts.fortsetzen,
+                                ab_schritt=opts.ab_schritt,
                                 modus=opts.modus, skript=opts.skript)
 
     return _start_job(name, "run_all", runner)

@@ -1,5 +1,7 @@
 import xml.etree.ElementTree as ET
 
+import pytest
+
 from autoedit import claude_client, config, paths, pipeline
 from tests.conftest import FakeClaude, fake_transcriber
 
@@ -136,3 +138,67 @@ def test_run_all_force_recomputes(projekt, music_lib):
                                transcriber=fake_transcriber)
     assert not any("bereits erledigt" in r for r in results.values())
     assert "reel_auswahl" in fake2.calls
+
+
+def test_run_all_ab_schritt(projekt, music_lib):
+    """'Ab hier ausführen': alles vor dem Startschritt bleibt unangetastet,
+    ab dort läuft die Kette bis zum Ende – auch wenn sie schon grün war."""
+    config.save_config(projekt, {"musik_aktiv": True})
+    pipeline.run_all(projekt, client=FakeClaude(), transcriber=fake_transcriber)
+
+    fake2 = FakeClaude()
+    results = pipeline.run_all(projekt, ab_schritt="broll", client=fake2,
+                               transcriber=_kaputter_transcriber)
+
+    for step in ("ingest", "transkript", "sync", "schnitt"):
+        assert "vor Startschritt" in results[step], results
+    # ab broll wurde neu gerechnet, obwohl alles grün war
+    assert "Zuordnungen" in results["broll"]
+    assert results["export"].startswith("testprojekt_premiere.xml")
+    assert "reel_auswahl" not in fake2.calls
+    assert "broll_matching" in fake2.calls
+
+    with pytest.raises(ValueError):
+        pipeline.run_all(projekt, ab_schritt="gibtsnicht")
+
+
+def test_run_all_skips_empty_music_library(projekt):
+    """Musik aktiv, aber keine Tracks: wird übersprungen statt abzubrechen."""
+    config.save_config(projekt, {"musik_aktiv": True})
+    results = pipeline.run_all(projekt, client=FakeClaude(),
+                               transcriber=fake_transcriber)
+    assert "keine Tracks" in results["musik"]
+    assert results["export"].startswith("testprojekt_premiere.xml")
+
+
+def test_run_all_tolerates_optional_step_failure(projekt, monkeypatch):
+    """Harter Fehler in einem optionalen Schritt (hier: B-Roll) bricht die
+    Kette nicht ab – Export läuft trotzdem."""
+    from autoedit import broll as broll_mod
+
+    def kaputt(*args, **kwargs):
+        raise RuntimeError("simulierter ffmpeg-Absturz")
+
+    monkeypatch.setattr(broll_mod, "analyze_broll", kaputt)
+    results = pipeline.run_all(projekt, client=FakeClaude(),
+                               transcriber=fake_transcriber)
+    assert results["broll"].startswith("FEHLER, übersprungen")
+    assert results["export"].startswith("testprojekt_premiere.xml")
+    status = pipeline.load_status(projekt)
+    assert status["broll"]["status"] == "fehler"
+    assert status["export"]["status"] == "ok"
+
+
+def test_run_all_required_step_failure_still_aborts(projekt, monkeypatch):
+    """Pflichtschritte (z.B. Sync) brechen weiterhin ab."""
+    from autoedit import sync_audio as sync_mod
+
+    def kaputt(*args, **kwargs):
+        raise RuntimeError("kein Audio")
+
+    monkeypatch.setattr(sync_mod, "compute_offsets", kaputt)
+    with pytest.raises(RuntimeError):
+        pipeline.run_all(projekt, client=FakeClaude(),
+                         transcriber=fake_transcriber)
+    status = pipeline.load_status(projekt)
+    assert status["export"]["status"] == "offen"

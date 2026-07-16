@@ -20,6 +20,9 @@ STEPS: list[str] = [
     "untertitel", "musik", "export",
 ]
 
+# Fehler in diesen Schritten brechen die Kette NICHT ab (werden übersprungen)
+OPTIONAL_STEPS = {"broll", "untertitel", "musik"}
+
 STEP_LABELS = {
     "ingest": "Ingest",
     "transkript": "Transkript",
@@ -124,6 +127,9 @@ def _step_musik(project, progress, **kw):
     cfg = config.load_config(project)
     if not cfg["musik_aktiv"]:
         return "übersprungen (musik_aktiv = false)"
+    if not music.scan_library():
+        return (f"übersprungen (keine Tracks in {paths.music_dir()} – "
+                "Ordner anlegen und Musik hineinlegen)")
     result = music.select_track(project, progress=progress, client=kw.get("client"))
     return f"Track: {result['name']}"
 
@@ -168,36 +174,63 @@ def run_step(project: str, step: str, progress=None, **kwargs) -> str:
 
 
 def run_all(project: str, progress=None, fortsetzen: bool = True,
-            **kwargs) -> dict:
+            ab_schritt: str | None = None, **kwargs) -> dict:
     """Komplette Kette; am Ende liegen FCPXML + SRT in output/.
 
     fortsetzen=True (Default): Schritte, die bereits auf 'ok' stehen, werden
     übersprungen – die Kette setzt beim ersten offenen oder fehlgeschlagenen
     Schritt fort. fortsetzen=False rechnet alles neu.
+
+    ab_schritt="broll": alles davor bleibt unangetastet, ab dem Schritt wird
+    bis zum Ende durchgerechnet (auch wenn dahinter schon alles grün war).
+
+    Fehler in optionalen Schritten (B-Roll/Untertitel/Musik) brechen die
+    Kette nicht ab – sie werden protokolliert und übersprungen.
     """
     status = load_status(project)
-    skip = {s for s in STEPS if fortsetzen and status[s]["status"] == "ok"}
-    if len(skip) == len(STEPS):
-        if progress:
-            progress(1.0, "Alle Schritte bereits erledigt – für einen "
-                          "kompletten Neustart 'Alles neu berechnen' wählen")
-        return {s: "übersprungen (bereits erledigt)" for s in STEPS}
+    if ab_schritt is not None:
+        if ab_schritt not in STEPS:
+            raise ValueError(f"Unbekannter Schritt: {ab_schritt!r}")
+        skip = set(STEPS[: STEPS.index(ab_schritt)])
+        skip_grund = "vor Startschritt"
+    else:
+        skip = {s for s in STEPS if fortsetzen and status[s]["status"] == "ok"}
+        skip_grund = "bereits erledigt"
+        if len(skip) == len(STEPS):
+            if progress:
+                progress(1.0, "Alle Schritte bereits erledigt – für einen "
+                              "kompletten Neustart 'Alles neu berechnen' wählen")
+            return {s: "übersprungen (bereits erledigt)" for s in STEPS}
 
     results = {}
+    fehler_uebersprungen: list[str] = []
     n = len(STEPS)
     for i, step in enumerate(STEPS):
         if step in skip:
-            results[step] = "übersprungen (bereits erledigt)"
-            log(project, f"Schritt '{step}' übersprungen (bereits erledigt)")
+            results[step] = f"übersprungen ({skip_grund})"
+            log(project, f"Schritt '{step}' übersprungen ({skip_grund})")
             continue
         def sub_progress(frac: float, meldung: str = "", _i=i, _step=step):
             if progress:
                 progress((_i + frac) / n,
                          f"{STEP_LABELS[_step]}: {meldung}" if meldung
                          else STEP_LABELS[_step])
-        results[step] = run_step(project, step, progress=sub_progress, **kwargs)
+        try:
+            results[step] = run_step(project, step, progress=sub_progress,
+                                     **kwargs)
+        except Exception as exc:  # noqa: BLE001 - optionale Schritte tolerieren
+            if step not in OPTIONAL_STEPS:
+                raise
+            results[step] = f"FEHLER, übersprungen: {exc}"
+            fehler_uebersprungen.append(STEP_LABELS[step])
+            log(project, f"Schritt '{step}' fehlgeschlagen – Kette läuft "
+                         "weiter (optionaler Schritt)")
     if progress:
-        progress(1.0, "Pipeline fertig")
+        meldung = "Pipeline fertig"
+        if fehler_uebersprungen:
+            meldung += (" – mit Fehlern übersprungen: "
+                        + ", ".join(fehler_uebersprungen))
+        progress(1.0, meldung)
     return results
 
 
