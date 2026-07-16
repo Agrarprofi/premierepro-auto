@@ -71,12 +71,28 @@ die Tonspur von Kamera A verwendet.
 ```yaml
 reel_laenge_sek: 60        # Ziellänge des Reels
 broll_dauer_sek: 2.0       # Länge jeder B-Roll-Einblendung
+broll_ziel_anzahl: 0       # 0 = automatisch (max. 40%); z.B. 15 Schnittbilder
+broll_min_abstand_sek: 1.0 # Mindestabstand zwischen zwei B-Rolls
 sprache: de
+schnitt_hinweise: ""       # Freitext-Vorgaben für die Reel-Auswahl
 musik_aktiv: false
 untertitel_aktiv: true
 export_format: quelle      # oder "9:16" (1080×1920, Clips zentriert skaliert)
 claude_modell: claude-sonnet-4-6
 ```
+
+## Reel-Auswahl (zweistufig)
+
+Der Schnitt-Schritt arbeitet auf annotiertem Rohmaterial: Sprechpausen werden
+markiert und **wiederholte Anläufe erkannt** (Falschstart → Pause → der Satz
+kommt nochmal, meist sauber). Regel: immer der letzte Take.
+
+1. **Aussagen-Analyse**: Claude bewertet alle Statements (Punkte 0–10,
+   Kategorie Hook/Kern/Abschluss, Qualität sauber/Versprecher/abgebrochen)
+   → `output/statements.json`, im Dashboard einsehbar.
+2. **Auswahl**: Auf Basis der Bewertung wird das Reel gebaut
+   (Hook → Kernaussage → Abschluss), unter Berücksichtigung der
+   `schnitt_hinweise` aus der Config.
 
 Presets lassen sich im Dashboard speichern/anwenden (z. B.
 „Reel 60s / B-Roll 2s / mit Musik“).

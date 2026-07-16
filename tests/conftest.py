@@ -174,9 +174,18 @@ class FakeClaude:
         self.music_choice = music_choice
         self.subtitle_transform = subtitle_transform or (lambda s: s)
         self.calls: list[str] = []
+        self.prompts: dict[str, str] = {}
 
     def complete_json(self, zweck, prompt, system=None, max_tokens=4096):
         self.calls.append(zweck)
+        self.prompts[zweck] = prompt
+        if zweck.startswith("aussagen_analyse"):
+            return [
+                {"start": s["start"], "ende": s["ende"], "text": s["text"],
+                 "punkte": 9 - i, "kategorie": "hook" if i == 0 else "kern",
+                 "qualitaet": "sauber", "kommentar": "stark"}
+                for i, s in enumerate(self.reel_segments)
+            ]
         if zweck.startswith("reel_auswahl"):
             return self.reel_segments
         if zweck.startswith("broll_matching"):
@@ -197,6 +206,7 @@ class FakeClaude:
 
     def complete_text(self, zweck, prompt, system=None, max_tokens=4096):
         self.calls.append(zweck)
+        self.prompts[zweck] = prompt
         if zweck.startswith("untertitel_korrektur"):
             srt = prompt.split("ohne Erklärungen.\n\n", 1)[1]
             return self.subtitle_transform(srt)

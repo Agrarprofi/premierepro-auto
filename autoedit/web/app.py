@@ -109,6 +109,7 @@ def overview(name: str) -> dict:
         "status": pipeline.load_status(name),
         "sync": sync_audio.load_sync(name),
         "segments": segs,
+        "statements": cutting.load_statements(name),
         "reel_dauer": cutting.reel_dauer(name),
         "broll_index": broll.load_broll_index(name),
         "broll_matches": broll.load_matches(name),

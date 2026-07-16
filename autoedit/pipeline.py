@@ -222,7 +222,8 @@ def estimate_costs(project: str) -> dict:
                 claude_client.estimate_cost_usd(model, tin, tout), 4),
         })
 
-    add("Reel-Auswahl", int(n_words * 2.0) + 500, 1200)
+    add("Aussagen-Analyse", int(n_words * 2.0) + 500, 2500)
+    add("Reel-Auswahl", int(n_words * 2.0) + 1500, 1200)
     if broll_clips:
         # ~1100 Tokens pro 768px-Frame plus Prompt/Antwort je Clip
         add("B-Roll-Analyse (Vision)", frames * 1100 + broll_clips * 300,

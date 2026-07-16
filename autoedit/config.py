@@ -19,6 +19,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # Mindestabstand zwischen zwei B-Roll-Einblendungen
     "broll_min_abstand_sek": 1.0,
     "sprache": "de",
+    # Freitext-Vorgaben für die Reel-Auswahl (z.B. "Fokus auf Bodengesundheit")
+    "schnitt_hinweise": "",
     "musik_aktiv": False,
     "untertitel_aktiv": True,
     # "quelle" = Auflösung/Framerate der Kamera A, "9:16" = 1080x1920 (Reels)
@@ -71,6 +73,8 @@ def _validate(cfg: dict[str, Any]) -> None:
         raise ValueError("broll_min_abstand_sek muss zwischen 0 und 30 liegen")
     if cfg["export_format"] not in ("quelle", "9:16"):
         raise ValueError('export_format muss "quelle" oder "9:16" sein')
+    if not isinstance(cfg["schnitt_hinweise"], str) or len(cfg["schnitt_hinweise"]) > 2000:
+        raise ValueError("schnitt_hinweise muss ein Text (max. 2000 Zeichen) sein")
     for key in ("musik_aktiv", "untertitel_aktiv"):
         if not isinstance(cfg[key], bool):
             raise ValueError(f"{key} muss true/false sein")

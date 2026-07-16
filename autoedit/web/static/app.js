@@ -53,6 +53,7 @@ async function refreshOverview() {
   renderConfig();
   renderFiles();
   renderSync();
+  renderStatements();
   renderSegments();
   renderBroll();
   renderSubtitleLinks();
@@ -145,6 +146,23 @@ function renderSync() {
         refreshOverview();
       } catch (e) { alert(e.message); }
     };
+    tbody.appendChild(tr);
+  }
+}
+
+function renderStatements() {
+  const box = $("#statements-box");
+  const data = overview.statements;
+  if (!data || !data.aussagen?.length) { box.classList.add("hidden"); return; }
+  box.classList.remove("hidden");
+  const tbody = $("tbody", box);
+  tbody.innerHTML = "";
+  for (const a of data.aussagen) {
+    const tr = document.createElement("tr");
+    const quali = a.qualitaet !== "sauber" ? ` ⚠ ${a.qualitaet}` : "";
+    tr.innerHTML = `<td><b>${a.punkte}</b></td><td>${a.kategorie}${quali}</td>
+      <td>${a.start.toFixed(1)}–${a.ende.toFixed(1)}</td>
+      <td>${a.text}</td><td class="muted">${a.kommentar || ""}</td>`;
     tbody.appendChild(tr);
   }
 }
@@ -368,6 +386,7 @@ function bindProjectEvents() {
       musik_aktiv: form.elements.musik_aktiv.checked,
       untertitel_aktiv: form.elements.untertitel_aktiv.checked,
       claude_modell: form.elements.claude_modell.value,
+      schnitt_hinweise: form.elements.schnitt_hinweise.value,
     };
     try {
       await api(`/api/projects/${currentProject}/config`,

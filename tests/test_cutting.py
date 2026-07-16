@@ -80,3 +80,78 @@ def test_render_cut_preview(projekt, fake_claude):
     erwartet = cutting.reel_dauer(projekt)
     assert abs(info["dauer"] - erwartet) < 0.6
     assert info["hoehe"] == 720
+
+
+def test_find_take_groups_detects_retakes():
+    """Falschstart + Wiederholung nach Pause -> gleiche Take-Gruppe,
+    letzter Anlauf ist der finale."""
+    segmente = [
+        {"start": 0.0, "end": 2.0, "text": "Die Kartoffelernte war heuer"},
+        {"start": 6.0, "end": 10.0,
+         "text": "Die Kartoffelernte war heuer richtig gut weil der Boden passt"},
+        {"start": 12.0, "end": 14.0, "text": "Der Traktor fährt mit GPS"},
+    ]
+    takes = cutting.find_take_groups(segmente)
+    assert 0 in takes and 1 in takes
+    assert takes[0]["gruppe"] == takes[1]["gruppe"]
+    assert takes[0]["final"] is False
+    assert takes[1]["final"] is True
+    assert 2 not in takes  # inhaltlich anders -> keine Gruppe
+
+
+def test_find_take_groups_ignores_short_fillers():
+    segmente = [
+        {"start": 0.0, "end": 0.5, "text": "ja genau"},
+        {"start": 2.0, "end": 2.5, "text": "ja genau"},
+    ]
+    assert cutting.find_take_groups(segmente) == {}
+
+
+def test_annotate_transcript_markers():
+    transcript = {"segmente": [
+        {"start": 0.0, "end": 2.0, "text": "Die Ernte war heuer sehr gut"},
+        # 4 s Sprechpause, dann Wiederholung
+        {"start": 6.0, "end": 9.0, "text": "Die Ernte war heuer sehr gut sag ich"},
+    ]}
+    text = cutting.annotate_transcript(transcript)
+    assert "⏸ Sprechpause 4.0 s" in text
+    assert "⟳ erster Anlauf" in text
+    assert "⟳ finaler Take" in text
+
+
+def test_analyze_statements(projekt, fake_claude):
+    _prep(projekt)
+    result = cutting.analyze_statements(projekt, client=fake_claude)
+    assert "aussagen_analyse" in fake_claude.calls
+    aussagen = result["aussagen"]
+    assert len(aussagen) == 2
+    # nach Punkten sortiert
+    assert aussagen[0]["punkte"] >= aussagen[1]["punkte"]
+    assert aussagen[0]["kategorie"] == "hook"
+    gespeichert = cutting.load_statements(projekt)
+    assert gespeichert["aussagen"] == aussagen
+    # Analyse-Prompt enthält die Rohmaterial-Regeln
+    assert "AUSSCHLIESSLICH" in fake_claude.prompts["aussagen_analyse"]
+
+
+def test_select_segments_uses_analysis_and_hints(projekt, fake_claude):
+    from autoedit import config
+
+    _prep(projekt)
+    config.save_config(projekt, {"schnitt_hinweise": "Fokus auf Bodengesundheit"})
+    cutting.select_segments(projekt, client=fake_claude)
+
+    # Analyse lief automatisch vor der Auswahl
+    assert fake_claude.calls.index("aussagen_analyse") < \
+        fake_claude.calls.index("reel_auswahl")
+    prompt = fake_claude.prompts["reel_auswahl"]
+    assert "Vorab-Analyse der stärksten Aussagen" in prompt
+    assert "AUSSCHLIESSLICH" in prompt          # Take-Regel
+    assert "Fokus auf Bodengesundheit" in prompt  # Nutzer-Hinweise
+    assert cutting.load_statements(projekt) is not None
+
+
+def test_select_segments_without_analysis(projekt, fake_claude):
+    _prep(projekt)
+    cutting.select_segments(projekt, client=fake_claude, analyse=False)
+    assert "aussagen_analyse" not in fake_claude.calls

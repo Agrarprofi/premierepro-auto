@@ -63,6 +63,9 @@
       <label class="check"><input type="checkbox" name="musik_aktiv"> Musik</label>
       <label class="check"><input type="checkbox" name="untertitel_aktiv"> Untertitel</label>
       <label>Claude-Modell <input name="claude_modell"></label>
+      <label style="grid-column: 1 / -1">Hinweise an den Editor (optional,
+        z.B. „Fokus auf Bodengesundheit, Du-Form vermeiden“)
+        <textarea name="schnitt_hinweise" rows="2"></textarea></label>
     </form>
     <div class="row">
       <button id="btn-save-config">Speichern</button>
@@ -116,6 +119,14 @@
     </div>
     <textarea id="cut-script" class="hidden" rows="4"
       placeholder="Eigenes Skript oder Stichworte …"></textarea>
+    <details id="statements-box" class="hidden">
+      <summary>Aussagen-Analyse (Bewertung aller Statements)</summary>
+      <table id="statements-table">
+        <thead><tr><th>P.</th><th>Kategorie</th><th>Zeit</th>
+          <th>Aussage</th><th>Kommentar</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </details>
     <div id="segments"></div>
     <p id="segments-total" class="muted"></p>
     <video id="cut-video" class="hidden" controls></video>

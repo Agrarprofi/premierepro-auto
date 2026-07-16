@@ -8,48 +8,217 @@ Segmente ab-/anwählen und umsortieren, bevor exportiert wird.
 from __future__ import annotations
 
 import json
+import re
 import uuid
+from collections import Counter
 from pathlib import Path
 
 from . import claude_client, config, ffmpeg_utils, ingest, paths, sync_audio, transcribe
 
 SEGMENTS_FILE = "segments.json"
+STATEMENTS_FILE = "statements.json"
 PADDING_SEC = 0.15
+PAUSE_MARKER_SEC = 1.5   # ab dieser Sprechpause wird sie im Prompt markiert
+TAKE_FENSTER = 4         # wie viele Folgepassagen auf Wiederholung geprüft werden
+TAKE_AEHNLICHKEIT = 0.7  # Token-Überlappung, ab der zwei Passagen als Takes gelten
+
+
+# --------------------------------------------------- Take-/Pausen-Annotation
+
+def _norm_tokens(text: str) -> list[str]:
+    return re.findall(r"[a-zäöüß0-9]+", text.lower())
+
+
+def _same_statement(a: str, b: str) -> bool:
+    """Erkennt Wiederholungen inkl. abgebrochener erster Anläufe."""
+    ta, tb = _norm_tokens(a), _norm_tokens(b)
+    if len(ta) < 3 or len(tb) < 3:
+        return False
+    common = sum((Counter(ta) & Counter(tb)).values())
+    return common / min(len(ta), len(tb)) >= TAKE_AEHNLICHKEIT
+
+
+def find_take_groups(segmente: list[dict]) -> dict[int, dict]:
+    """Wiederholte Aussagen (mehrere Anläufe) im Transkript finden.
+
+    Interviews enthalten typischerweise Falschstarts: Sprechpause, dann sagt
+    die Person den Satz noch einmal – und der letzte Take ist der beste.
+    Rückgabe: {segment_index: {"gruppe": id, "final": bool}}.
+    """
+    gruppe_von: dict[int, int] = {}
+    next_gruppe = 0
+    for i in range(len(segmente)):
+        for j in range(i + 1, min(i + 1 + TAKE_FENSTER, len(segmente))):
+            if _same_statement(segmente[i]["text"], segmente[j]["text"]):
+                g = gruppe_von.get(i)
+                if g is None:
+                    g = next_gruppe
+                    next_gruppe += 1
+                    gruppe_von[i] = g
+                gruppe_von[j] = g
+    result: dict[int, dict] = {}
+    for g in set(gruppe_von.values()):
+        mitglieder = sorted(i for i, gi in gruppe_von.items() if gi == g)
+        for i in mitglieder:
+            result[i] = {"gruppe": g, "final": i == mitglieder[-1]}
+    return result
+
+
+def annotate_transcript(transcript: dict) -> str:
+    """Transkript-Zeilen mit Sprechpausen- und Take-Markern für den Prompt."""
+    segmente = transcript["segmente"]
+    takes = find_take_groups(segmente)
+    lines: list[str] = []
+    for i, s in enumerate(segmente):
+        if i > 0:
+            pause = s["start"] - segmente[i - 1]["end"]
+            if pause >= PAUSE_MARKER_SEC:
+                lines.append(f"⏸ Sprechpause {pause:.1f} s")
+        marker = ""
+        info = takes.get(i)
+        if info is not None:
+            if info["final"]:
+                marker = "  ⟳ finaler Take dieser Aussage (den verwenden)"
+            else:
+                letzte = max(j for j, t in takes.items()
+                             if t["gruppe"] == info["gruppe"])
+                marker = (f"  ⟳ erster Anlauf – wird bei "
+                          f"[{segmente[letzte]['start']:.2f}] sauber wiederholt")
+        lines.append(f"[{s['start']:.2f} – {s['end']:.2f}] {s['text']}{marker}")
+    return "\n".join(lines)
+
+
+_ROHMATERIAL_REGELN = (
+    "Das Transkript ist ROHMATERIAL: Es enthält Sprechpausen (⏸), "
+    "Versprecher und wiederholte Anläufe (⟳). Regeln dafür:\n"
+    "- Wenn eine Aussage mehrfach vorkommt (die Person setzt nach einer "
+    "Pause neu an und sagt den Satz noch einmal), verwende AUSSCHLIESSLICH "
+    "den letzten, sauberen Take – nie den ersten Anlauf.\n"
+    "- Meide Passagen mit Versprechern, Satzabbrüchen oder Füllwort-Ketten.\n"
+)
+
+
+# ------------------------------------------------------------ Aussagen-Analyse
+
+def analyze_statements(project: str, progress=None, client=None) -> dict:
+    """Analyse-Lauf: ALLE brauchbaren Aussagen bewerten (Punkte, Kategorie,
+    Qualität). Ergebnis wird gespeichert und fließt in die Auswahl ein."""
+    cfg = config.load_config(project)
+    transcript = transcribe.load_transcript(project)
+    if transcript is None:
+        raise RuntimeError("Erst transkribieren (Phase 1).")
+    if client is None:
+        client = claude_client.ClaudeClient(model=cfg["claude_modell"], project=project)
+
+    if progress:
+        progress(0.1, "Analysiere Aussagen …")
+    prompt = (
+        "Du bist ein erfahrener Interview-Editor. Analysiere dieses "
+        "Interview-Transkript (Rohmaterial) und bewerte JEDE eigenständige, "
+        "brauchbare Aussage – nicht nur die besten.\n"
+        + _ROHMATERIAL_REGELN +
+        "\nBewerte pro Aussage:\n"
+        "- punkte: 0-10 (Prägnanz, Aussagekraft, Emotion, Zitierfähigkeit)\n"
+        '- kategorie: "hook" (starker Einstieg), "kern" (Kernaussage), '
+        '"abschluss" (rundes Ende) oder "detail"\n'
+        '- qualitaet: "sauber", "versprecher" oder "abgebrochen"\n'
+        "- kommentar: 1 kurzer Satz, warum (nicht) stark\n\n"
+        f"Transkript (Zeiten in Sekunden):\n{annotate_transcript(transcript)}\n\n"
+        'Antworte NUR als JSON-Array: [{"start": <sek>, "ende": <sek>, '
+        '"text": "...", "punkte": <0-10>, "kategorie": "...", '
+        '"qualitaet": "...", "kommentar": "..."}]'
+    )
+    raw = client.complete_json("aussagen_analyse", prompt, max_tokens=8192)
+    if not isinstance(raw, list):
+        raise ValueError(f"Unerwartete Claude-Antwort (kein Array): {raw!r}")
+
+    aussagen = []
+    for item in raw:
+        try:
+            aussagen.append({
+                "start": float(item["start"]),
+                "ende": float(item["ende"]),
+                "text": str(item.get("text", "")),
+                "punkte": max(0, min(10, int(item.get("punkte", 0)))),
+                "kategorie": str(item.get("kategorie", "detail")),
+                "qualitaet": str(item.get("qualitaet", "sauber")),
+                "kommentar": str(item.get("kommentar", "")),
+            })
+        except (KeyError, TypeError, ValueError):
+            continue
+    aussagen.sort(key=lambda a: a["punkte"], reverse=True)
+    result = {"projekt": project, "aussagen": aussagen}
+    (paths.output_dir(project) / STATEMENTS_FILE).write_text(
+        json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    if progress:
+        progress(0.4, f"{len(aussagen)} Aussagen bewertet")
+    return result
+
+
+def load_statements(project: str) -> dict | None:
+    f = paths.output_dir(project) / STATEMENTS_FILE
+    if not f.is_file():
+        return None
+    return json.loads(f.read_text(encoding="utf-8"))
+
+
+def _statements_block(statements: dict | None, limit: int = 15) -> str:
+    if not statements or not statements.get("aussagen"):
+        return ""
+    zeilen = "\n".join(
+        f"- [{a['start']:.2f} – {a['ende']:.2f}] ({a['punkte']} P., "
+        f"{a['kategorie']}, {a['qualitaet']}) \"{a['text']}\""
+        + (f" – {a['kommentar']}" if a["kommentar"] else "")
+        for a in statements["aussagen"][:limit]
+    )
+    return (
+        "\nVorab-Analyse der stärksten Aussagen (nutze sie als Grundlage; "
+        "bevorzuge hohe Punkte und qualitaet 'sauber'):\n" + zeilen + "\n"
+    )
 
 
 # ------------------------------------------------------------ Claude-Auswahl
 
-def _transcript_lines(transcript: dict) -> str:
-    return "\n".join(
-        f"[{s['start']:.2f} – {s['end']:.2f}] {s['text']}"
-        for s in transcript["segmente"]
-    )
+def _hinweise_block(cfg: dict) -> str:
+    hinweise = str(cfg.get("schnitt_hinweise", "")).strip()
+    if not hinweise:
+        return ""
+    return f"\nZusätzliche Vorgaben des Nutzers:\n{hinweise}\n"
 
 
-def _prompt_auto(transcript: dict, reel_laenge: float) -> str:
+def _prompt_auto(transcript: dict, reel_laenge: float, cfg: dict,
+                 statements: dict | None) -> str:
     return (
         "Du bist ein erfahrener Video-Editor. Wähle aus diesem Interview-"
         f"Transkript die Passagen aus, die zusammen ein schlüssiges Reel von "
         f"maximal {reel_laenge:.0f} Sekunden ergeben.\n"
+        + _ROHMATERIAL_REGELN +
         "Kriterien:\n"
         "- inhaltlicher Bogen: Hook am Anfang, Kernaussage, Abschluss\n"
         "- vollständige Sätze, keine Schnitte mitten im Wort\n"
-        "- die Summe der Segmentdauern darf die Maximallänge nicht überschreiten\n\n"
-        f"Transkript (Zeiten in Sekunden):\n{_transcript_lines(transcript)}\n\n"
+        "- die Summe der Segmentdauern darf die Maximallänge nicht überschreiten\n"
+        + _statements_block(statements)
+        + _hinweise_block(cfg) +
+        f"\nTranskript (Zeiten in Sekunden):\n{annotate_transcript(transcript)}\n\n"
         'Antworte NUR als JSON-Array: '
         '[{"start": <sek>, "ende": <sek>, "text": "...", "begruendung": "..."}]'
     )
 
 
-def _prompt_script(transcript: dict, skript: str, reel_laenge: float) -> str:
+def _prompt_script(transcript: dict, skript: str, reel_laenge: float,
+                   cfg: dict, statements: dict | None) -> str:
     return (
         "Du bist ein erfahrener Video-Editor. Der Nutzer hat ein eigenes "
         "Skript bzw. Stichworte vorgegeben. Suche im Transkript die Passagen, "
         "die diesem Skript am besten entsprechen, in der Reihenfolge des "
         f"Skripts. Ziel-Gesamtlänge: maximal {reel_laenge:.0f} Sekunden.\n"
+        + _ROHMATERIAL_REGELN +
         "Vollständige Sätze, keine Schnitte mitten im Wort.\n\n"
-        f"Skript/Stichworte des Nutzers:\n{skript}\n\n"
-        f"Transkript (Zeiten in Sekunden):\n{_transcript_lines(transcript)}\n\n"
+        f"Skript/Stichworte des Nutzers:\n{skript}\n"
+        + _statements_block(statements)
+        + _hinweise_block(cfg) +
+        f"\nTranskript (Zeiten in Sekunden):\n{annotate_transcript(transcript)}\n\n"
         'Antworte NUR als JSON-Array: '
         '[{"start": <sek>, "ende": <sek>, "text": "...", "begruendung": "..."}]'
     )
@@ -81,7 +250,7 @@ def words_in_range(words: list[dict], start: float, ende: float) -> list[dict]:
 # ------------------------------------------------------------ Auswahl-Lauf
 
 def select_segments(project: str, modus: str = "auto", skript: str | None = None,
-                    progress=None, client=None) -> dict:
+                    progress=None, client=None, analyse: bool = True) -> dict:
     cfg = config.load_config(project)
     transcript = transcribe.load_transcript(project)
     if transcript is None:
@@ -93,10 +262,16 @@ def select_segments(project: str, modus: str = "auto", skript: str | None = None
     if client is None:
         client = claude_client.ClaudeClient(model=cfg["claude_modell"], project=project)
 
+    # Stufe 1: Aussagen bewerten (getrennt von der Auswahl -> bessere Treffer)
+    statements = None
+    if analyse:
+        statements = analyze_statements(project, progress=progress, client=client)
+
     if progress:
-        progress(0.1, "Frage Claude nach der Segment-Auswahl …")
-    prompt = (_prompt_script(transcript, skript, reel_laenge) if modus == "skript"
-              else _prompt_auto(transcript, reel_laenge))
+        progress(0.5, "Frage Claude nach der Segment-Auswahl …")
+    prompt = (_prompt_script(transcript, skript, reel_laenge, cfg, statements)
+              if modus == "skript"
+              else _prompt_auto(transcript, reel_laenge, cfg, statements))
     raw = client.complete_json("reel_auswahl", prompt, max_tokens=4096)
     if not isinstance(raw, list):
         raise ValueError(f"Unerwartete Claude-Antwort (kein Array): {raw!r}")
