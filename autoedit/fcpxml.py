@@ -57,6 +57,36 @@ def _media_lookup(media: dict) -> dict[str, dict]:
     return {c["relpfad"]: c for c in media.get("clips", [])}
 
 
+def _apply_av_versatz(ev: dict, clip: dict, warnungen: list[str]) -> None:
+    """Container-Startversatz Video vs. Audio kompensieren.
+
+    Unsere src_in-Zeiten stammen aus der Audio-Korrelation (Zeitachse ab dem
+    ersten Audiosample). Premiere adressiert Frames ab dem ersten Videobild.
+    Starten die Spuren im Container versetzt, muss der Versatz abgezogen
+    werden – sonst stimmen A- und B-Kamera im Bild nicht überein, obwohl
+    der Ton passt.
+    """
+    versatz = float(clip.get("av_versatz") or 0.0)
+    if abs(versatz) < 0.001:
+        return
+    neu = ev["src_in"] - versatz
+    if neu < 0:
+        warnungen.append(
+            f"AV-Versatz-Korrektur bei {ev['name']} am Dateianfang gekappt "
+            f"({neu:.3f} s)"
+        )
+        neu = 0.0
+    if neu + ev["dauer"] > ev["datei_dauer"]:
+        alt = ev["dauer"]
+        ev["dauer"] = round(max(0.0, ev["datei_dauer"] - neu), 6)
+        warnungen.append(
+            f"AV-Versatz-Korrektur bei {ev['name']} am Dateiende gekappt "
+            f"({alt - ev['dauer']:.3f} s)"
+        )
+    ev["src_in"] = round(neu, 6)
+    ev["av_versatz"] = versatz
+
+
 def _event_from_clip(base: Path, clip: dict, timeline_start: float, dauer: float,
                      src_in: float, **extra) -> dict:
     return {
@@ -133,6 +163,7 @@ def build_timeline(project: str) -> dict:
             for p in pieces:
                 ev = _event_from_clip(base, p["clip"], t0 + p["rel_start"],
                                       p["dauer"], p["src_in"])
+                _apply_av_versatz(ev, p["clip"], warnungen)
                 tracks[vtrack].append(ev)
                 if atrack and p["clip"].get("audio_kanaele"):
                     tracks[atrack].append(dict(ev))
@@ -140,9 +171,9 @@ def build_timeline(project: str) -> dict:
         # A1: Referenz-Audio – Referenzzeit == Dateizeit der Referenzdatei
         a_dauer = min(seg["dauer"], max(0.0, float(ref_clip["dauer"]) - seg["start"]))
         if a_dauer > 0:
-            tracks["A1"].append(
-                _event_from_clip(base, ref_clip, t0, a_dauer, seg["start"])
-            )
+            ev_ref = _event_from_clip(base, ref_clip, t0, a_dauer, seg["start"])
+            _apply_av_versatz(ev_ref, ref_clip, warnungen)
+            tracks["A1"].append(ev_ref)
         if a_dauer < seg["dauer"] - 0.04:
             warnungen.append(
                 f"Referenz-Audio endet {seg['dauer'] - a_dauer:.2f} s vor "
@@ -153,6 +184,13 @@ def build_timeline(project: str) -> dict:
 
     # V3: B-Roll
     matches = broll.load_matches(project)
+    if matches and matches.get("reel_stand") and \
+            matches["reel_stand"] != cutting.segment_stand(project):
+        warnungen.append(
+            "B-Roll-Zuordnung stammt von einem älteren Schnitt-Stand – "
+            "die Zeiten passen nicht mehr zur aktuellen Timeline. "
+            "Bitte den B-Roll-Schritt neu ausführen."
+        )
     if matches:
         for m in matches["matches"]:
             clip = lookup.get(m["broll_datei"])

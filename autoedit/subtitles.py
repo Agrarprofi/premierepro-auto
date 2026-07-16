@@ -43,23 +43,7 @@ Das Timing ist bereits auf die geschnittene Reel-Timeline gerechnet.
 
 def _timeline_words(project: str) -> list[dict]:
     """Wörter der aktiven Segmente mit Timeline-Zeiten (Reel-Zeitachse)."""
-    transcript = transcribe.load_transcript(project)
-    segs = cutting.enabled_segments(project)
-    if transcript is None:
-        raise RuntimeError("Kein Transkript vorhanden (Phase 1).")
-    if not segs:
-        raise RuntimeError("Keine aktiven Segmente (Phase 3).")
-    words = []
-    for seg in segs:
-        for w in cutting.words_in_range(transcript["woerter"], seg["start"], seg["ende"]):
-            words.append({
-                "word": w["word"],
-                "start": seg["timeline_start"] + (w["start"] - seg["start"]),
-                "end": min(seg["timeline_start"] + (w["end"] - seg["start"]),
-                           seg["timeline_ende"]),
-                "segment_ende": seg["timeline_ende"],
-            })
-    return words
+    return cutting.timeline_words(project)
 
 
 def build_cues(words: list[dict]) -> list[dict]:

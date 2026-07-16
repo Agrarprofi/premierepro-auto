@@ -94,7 +94,14 @@ def put_config(name: str, updates: dict[str, Any]) -> dict:
 @app.get("/api/projects/{name}/overview")
 def overview(name: str) -> dict:
     _project_or_404(name)
+    import json as _json
+
     media = ingest.load_media_info(name)
+    warnungen = []
+    timeline_file = paths.output_dir(name) / "timeline.json"
+    if timeline_file.is_file():
+        warnungen = _json.loads(
+            timeline_file.read_text(encoding="utf-8")).get("warnungen", [])
     dateien: dict[str, list[dict]] = {}
     for role in paths.ROLES:
         dateien[role] = [
@@ -114,6 +121,7 @@ def overview(name: str) -> dict:
         "broll_index": broll.load_broll_index(name),
         "broll_matches": broll.load_matches(name),
         "musik": music.load_selection(name),
+        "export_warnungen": warnungen,
         "kosten": claude_client.load_costs(name),
         "transcript_vorhanden": transcribe.load_transcript(name) is not None,
     }

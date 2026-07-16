@@ -400,6 +400,41 @@ def reel_dauer(project: str) -> float:
     return segs[-1]["timeline_ende"] if segs else 0.0
 
 
+def timeline_words(project: str) -> list[dict]:
+    """Wörter der aktiven Segmente mit Zeiten auf der Reel-Zeitachse.
+
+    Grundlage für wortgenaue Untertitel UND wortgenaues B-Roll-Timing.
+    """
+    transcript = transcribe.load_transcript(project)
+    segs = enabled_segments(project)
+    if transcript is None:
+        raise RuntimeError("Kein Transkript vorhanden (Phase 1).")
+    if not segs:
+        raise RuntimeError("Keine aktiven Segmente (Phase 3).")
+    words = []
+    for seg in segs:
+        for w in words_in_range(transcript["woerter"], seg["start"], seg["ende"]):
+            words.append({
+                "word": w["word"],
+                "start": seg["timeline_start"] + (w["start"] - seg["start"]),
+                "end": min(seg["timeline_start"] + (w["end"] - seg["start"]),
+                           seg["timeline_ende"]),
+                "segment_ende": seg["timeline_ende"],
+            })
+    return words
+
+
+def segment_stand(project: str) -> str:
+    """Kurzer Fingerabdruck des aktuellen Schnitt-Stands (aktive Segmente +
+    Reihenfolge). Damit erkennen nachgelagerte Schritte, ob ihre Daten von
+    einem älteren Schnitt stammen."""
+    import hashlib
+
+    segs = enabled_segments(project)
+    payload = json.dumps([(s["id"], s["timeline_start"]) for s in segs])
+    return hashlib.md5(payload.encode()).hexdigest()[:10]
+
+
 def take_joins(project: str) -> list[float]:
     """Reel-Zeitpunkte, an denen zwei Takes zusammengeschnitten sind
     (Jump-Cut auf derselben Kamera) – Kandidaten für B-Roll-Abdeckung."""

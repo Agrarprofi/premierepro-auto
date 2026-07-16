@@ -282,6 +282,10 @@ function renderExport() {
   link.classList.toggle("hidden", !done);
   link.href = `/api/projects/${currentProject}/files/${xmlName}`;
   link.download = xmlName;
+  const w = overview.export_warnungen || [];
+  $("#export-warnungen").innerHTML = w.length
+    ? '<p class="muted">⚠ ' + w.join("<br>⚠ ") + "</p>"
+    : "";
 }
 
 async function renderCosts() {

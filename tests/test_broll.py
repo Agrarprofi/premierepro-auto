@@ -95,3 +95,19 @@ def test_match_broll_with_target_count(projekt):
     # Wiederverwendung desselben Clips ist erlaubt
     assert all(m["broll_datei"] == "input/broll/broll_traktor.mp4"
                for m in result["matches"])
+
+
+def test_match_prompt_word_level_timeline(projekt, fake_claude):
+    """B-Roll-Matching bekommt die wortgenaue Reel-Zeitachse, damit die
+    Einblendung exakt beim passenden Wort liegt."""
+    from tests.conftest import prepared_project
+    prepared_project(projekt, fake_claude, with_broll=True)
+    prompt = fake_claude.prompts["broll_matching"]
+    assert "Wortgenaue Reel-Zeitachse" in prompt
+    assert "EXAKT" in prompt
+    # Wortzeilen mit Zeitmarken vorhanden
+    import re
+    assert re.search(r"\n\[\d+\.\d\] \w+", prompt)
+    # Schnitt-Stand wird gespeichert
+    data = broll.load_matches(projekt)
+    assert data["reel_stand"]

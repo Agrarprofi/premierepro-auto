@@ -81,7 +81,21 @@ def media_info(path: Path | str) -> dict:
         "audio_kanaele": None,
         "audio_samplerate": None,
         "audio_codec": None,
+        # Startversatz Video- vs. Audiospur im Container (video_start -
+        # audio_start). Kameras schreiben oft Edit-Lists/start_times;
+        # Premiere zählt Frames ab dem ersten VIDEObild, unsere Offsets ab
+        # dem ersten AUDIOsample - der Export kompensiert diese Differenz.
+        "av_versatz": 0.0,
     }
+
+    def _start_time(stream) -> float | None:
+        raw = stream.get("start_time")
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return None
+
+    video_start = audio_start = None
     for stream in data.get("streams", []):
         if stream.get("codec_type") == "video" and info["breite"] is None:
             info["breite"] = stream.get("width")
@@ -90,12 +104,16 @@ def media_info(path: Path | str) -> dict:
                 stream.get("avg_frame_rate") or stream.get("r_frame_rate")
             ) or parse_fps(stream.get("r_frame_rate"))
             info["video_codec"] = stream.get("codec_name")
+            video_start = _start_time(stream)
             if not info["dauer"] and stream.get("duration"):
                 info["dauer"] = float(stream["duration"])
         elif stream.get("codec_type") == "audio" and info["audio_kanaele"] is None:
             info["audio_kanaele"] = stream.get("channels")
             info["audio_samplerate"] = int(stream.get("sample_rate", 0) or 0) or None
             info["audio_codec"] = stream.get("codec_name")
+            audio_start = _start_time(stream)
+    if video_start is not None and audio_start is not None:
+        info["av_versatz"] = round(video_start - audio_start, 6)
     return info
 
 

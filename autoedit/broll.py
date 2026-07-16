@@ -127,6 +127,17 @@ def _reel_text(segs: list[dict]) -> str:
     )
 
 
+def _word_timeline(project: str, woerter_pro_zeile: int = 8) -> str:
+    """Wortgenaue Reel-Zeitachse für präzises B-Roll-Timing."""
+    words = cutting.timeline_words(project)
+    lines = []
+    for i in range(0, len(words), woerter_pro_zeile):
+        chunk = words[i:i + woerter_pro_zeile]
+        text = " ".join(w["word"] for w in chunk)
+        lines.append(f"[{chunk[0]['start']:.1f}] {text}")
+    return "\n".join(lines)
+
+
 def match_broll(project: str, progress=None, client=None) -> dict:
     cfg = config.load_config(project)
     index = load_broll_index(project)
@@ -187,9 +198,12 @@ def match_broll(project: str, progress=None, client=None) -> dict:
         f"- mindestens {min_abstand:.1f} Sekunden Abstand zwischen zwei "
         "Einblendungen (nie zwei B-Rolls direkt hintereinander)\n"
         "- 'transkript_zeit' ist der Startzeitpunkt der Einblendung auf der "
-        "Reel-Zeitachse in Sekunden\n\n"
-        f"Reel-Transkript (Reel-Zeitachse, Gesamtlänge {reel_dauer:.1f} s):\n"
+        "Reel-Zeitachse in Sekunden. Setze ihn EXAKT auf den Zeitpunkt, an "
+        "dem das inhaltlich passende Wort fällt (die Zeitmarken in der "
+        "wortgenauen Zeitachse unten nutzen) – nicht irgendwo im Absatz.\n\n"
+        f"Reel-Überblick (Segmente, Gesamtlänge {reel_dauer:.1f} s):\n"
         f"{_reel_text(segs)}\n\n"
+        f"Wortgenaue Reel-Zeitachse:\n{_word_timeline(project)}\n\n"
         f"Verfügbare B-Roll-Clips:\n{beschreibungen}\n\n"
         'Antworte NUR als JSON-Array: [{"transkript_zeit": <sek>, '
         '"broll_datei": "...", "broll_einstieg": <sek>, "begruendung": "..."}]'
@@ -226,7 +240,8 @@ def match_broll(project: str, progress=None, client=None) -> dict:
 
     matches = _enforce_rules(candidates, broll_dauer, reel_dauer,
                              min_abstand=min_abstand, budget=budget)
-    result = {"projekt": project, "matches": matches}
+    result = {"projekt": project, "matches": matches,
+              "reel_stand": cutting.segment_stand(project)}
     if ziel > 0 and len(matches) < ziel:
         result["hinweis"] = (
             f"Ziel waren {ziel} Schnittbilder, nach den Regeln blieben "

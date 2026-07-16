@@ -50,15 +50,21 @@ def make_reference(path: Path, seed: int = 7) -> np.ndarray:
 
 
 def make_camera(path: Path, ref: np.ndarray, start: float, dur: float,
-                audio_codec: str, gain: float = 0.8) -> None:
-    """Video (testsrc) + Audio = Ausschnitt der Referenz ab `start`."""
+                audio_codec: str, gain: float = 0.8,
+                audio_delay: float = 0.0) -> None:
+    """Video (testsrc) + Audio = Ausschnitt der Referenz ab `start`.
+
+    audio_delay > 0 verschiebt die Audiospur im Container nach hinten
+    (start_time/Edit-List) – wie es echte Kameras tun.
+    """
     seg = ref[int(start * SR) : int((start + dur) * SR)] * gain
     tmp_wav = path.with_suffix(".tmp.wav")
     wavfile.write(tmp_wav, SR, (seg * 32767).astype(np.int16))
     _run([
         "ffmpeg", "-y", "-v", "error",
         "-f", "lavfi", "-i", f"testsrc=duration={dur}:size=640x360:rate=25",
-        "-i", tmp_wav,
+        "-itsoffset", str(audio_delay), "-i", str(tmp_wav),
+        "-map", "0:v", "-map", "1:a",
         "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
         "-c:a", audio_codec, "-shortest", str(path),
     ])

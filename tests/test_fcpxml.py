@@ -212,3 +212,69 @@ def test_fcpxml_mixed_framerate_and_resolution_broll(projekt, fake_claude, media
     # Datei-Block traegt die native Rate
     fileblock = item.find("file")
     assert fileblock.find("rate/timebase").text == "50"
+
+
+def test_av_versatz_compensation(env, media, tmp_path):
+    """Kameradatei mit versetzter Audiospur im Container (Edit-List):
+    der Ton-Offset stimmt, aber Premiere zählt Frames ab dem ersten
+    Videobild – ohne Kompensation zeigen V1/V2 verschiedene Momente."""
+    import json
+    import shutil
+    from autoedit import ffmpeg_utils, ingest, sync_audio
+    from tests.conftest import (CAM_A_START, FakeClaude, fake_transcriber,
+                                make_camera)
+    from autoedit import cutting, transcribe
+
+    name = "avversatz"
+    paths.create_project(name)
+    base = paths.project_dir(name)
+    shutil.copy(media["root"] / "dji.wav", base / "input/audio_dji/dji.wav")
+    # Kamera A: Audiospur im Container 0.5 s nach hinten versetzt
+    make_camera(base / "input/cam_a/cam_delay.mp4", media["ref"],
+                CAM_A_START, 24.0, "aac", audio_delay=0.5)
+
+    info = ffmpeg_utils.media_info(base / "input/cam_a/cam_delay.mp4")
+    # ~0.5 s itsoffset minus AAC-Encoder-Priming (~64 ms) = Container-Wert
+    assert -0.55 < info["av_versatz"] < -0.35
+
+    ingest.scan_project(name)
+    transcribe.transcribe_project(name, transcriber=fake_transcriber)
+    sync_audio.compute_offsets(name)
+    fake = FakeClaude(reel_segments=[
+        {"start": 6.0, "ende": 10.0, "text": "x", "begruendung": ""}])
+    cutting.select_segments(name, client=fake)
+    timeline = fcpxml.build_timeline(name)
+
+    seg = cutting.enabled_segments(name)[0]
+    sync = sync_audio.load_sync(name)
+    offset = sync["offsets"]["input/cam_a/cam_delay.mp4"]["offset_sekunden"]
+    ev = timeline["tracks"]["V1"][0]
+    # src_in = Audio-Zeit MINUS AV-Versatz (hier -0.5 -> +0.5 s später)
+    erwartet = (seg["start"] - offset) - info["av_versatz"]
+    assert ev["src_in"] == pytest.approx(erwartet, abs=0.02)
+    assert ev["av_versatz"] == pytest.approx(info["av_versatz"], abs=0.001)
+    # A2 (Kamera-Ton) bekommt dieselbe Korrektur -> bleibt bildsynchron
+    a2 = timeline["tracks"]["A2"][0]
+    assert a2["src_in"] == pytest.approx(erwartet, abs=0.02)
+
+
+def test_no_av_versatz_for_clean_files(projekt, fake_claude):
+    """Normale Dateien (Spuren starten gemeinsam): keine Korrektur."""
+    prepared_project(projekt, fake_claude, with_broll=False)
+    timeline = fcpxml.build_timeline(projekt)
+    for ev in timeline["tracks"]["V1"]:
+        assert "av_versatz" not in ev or abs(ev["av_versatz"]) < 0.05
+
+
+def test_export_warns_on_stale_broll_matches(projekt, fake_claude):
+    """Schnitt nach dem B-Roll-Matching geändert -> Zeiten passen nicht
+    mehr, der Export warnt."""
+    prepared_project(projekt, fake_claude, with_broll=True)
+    timeline = fcpxml.build_timeline(projekt)
+    assert not any("Schnitt-Stand" in w for w in timeline["warnungen"])
+
+    # Segment deaktivieren -> Timeline ändert sich
+    data = cutting.load_segments(projekt)
+    cutting.update_segments(projekt, aktiv={data["segmente"][0]["id"]: False})
+    timeline = fcpxml.build_timeline(projekt)
+    assert any("Schnitt-Stand" in w for w in timeline["warnungen"])
