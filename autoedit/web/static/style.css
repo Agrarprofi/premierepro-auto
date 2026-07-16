@@ -86,6 +86,10 @@ h3 .lamp.laeuft { background: var(--run); animation: pulse 1s infinite; }
 .next-step.done { border-color: var(--ok); border-left-color: var(--ok); }
 .next-step.fehler { border-color: var(--err); border-left-color: var(--err); }
 
+/* Kurz-Erklärung unter jeder Sektions-Überschrift */
+section .erklaerung { font-size: .8rem; margin: -.2rem 0 .7rem;
+  max-width: 72ch; line-height: 1.45; }
+
 /* Einklappbare Bereiche (Kosten, Log) */
 section > details > summary { font-size: 1rem; font-weight: 600;
   color: var(--accent-dark); cursor: pointer; margin-bottom: .5rem; }

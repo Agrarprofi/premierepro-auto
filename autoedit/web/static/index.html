@@ -44,6 +44,7 @@
 
   <section>
     <h3>Status-Kette</h3>
+    <p class="muted erklaerung">Die 8 Schritte der Pipeline in Reihenfolge – Maus über einen Schritt zeigt, was er macht. <b>▶</b> führt nur diesen Schritt aus, <b>⏩</b> rechnet ab dort alles bis zum Ende durch. Grün = erledigt (wird bei „Alles ausführen“ übersprungen).</p>
     <div id="status-chain" class="chain"></div>
     <div class="row">
       <button id="btn-run-all" class="primary"
@@ -90,11 +91,13 @@
 
   <section>
     <h3><span class="lamp" data-step="ingest"></span>Dateien</h3>
+    <p class="muted erklaerung">Liest alle Dateien aus <code>input/</code> ein (Dauer, Auflösung, Framerate), erkennt variable Framerate und wandelt betroffene Dateien automatisch nach CFR, damit Bild und Ton in Premiere fest zusammenbleiben. Neu ausführen, wenn Dateien dazukommen.</p>
     <div id="files" class="files"></div>
   </section>
 
   <section>
     <h3><span class="lamp" data-step="transkript"></span>Transkript</h3>
+    <p class="muted erklaerung">Wandelt das Referenz-Audio (DJI-Mikro) mit WhisperX lokal in Text um – wortgenau mit Zeitstempeln. Grundlage für Schnitt, B-Roll-Timing und Untertitel. Dauert ein paar Minuten.</p>
     <div class="row">
       <button id="btn-transcribe">Transkription starten</button>
       <button id="btn-show-transcript">Vorschau anzeigen</button>
@@ -104,6 +107,7 @@
 
   <section>
     <h3><span class="lamp" data-step="sync"></span>Synchronisation</h3>
+    <p class="muted erklaerung">Findet per Audio-Vergleich (Kreuzkorrelation), wo jede Kamera relativ zum DJI-Ton liegt – wie Einklatschen, nur automatisch. Mit den Vorschau-Buttons unten kannst du das Ergebnis anhören.</p>
     <div class="row">
       <button id="btn-sync">Sync berechnen</button>
       <button id="btn-sync-preview-a">Sync prüfen: Kamera A</button>
@@ -123,6 +127,7 @@
 
   <section>
     <h3><span class="lamp" data-step="schnitt"></span>Schnitt (Reel-Auswahl)</h3>
+    <p class="muted erklaerung">Claude bewertet alle Aussagen im Transkript (inkl. erkannter Wiederholungen) und baut daraus das Reel: Hook → Kern → Abschluss. Stille an den Rändern und lange Denkpausen werden am echten Audio weggeschnitten. Optional mit Skript als Leitfaden.</p>
     <label class="block">Skript / Leitfaden (optional – leer lassen =
       vollautomatische Auswahl)
       <textarea id="cut-script" rows="4"
@@ -148,6 +153,7 @@
 
   <section>
     <h3><span class="lamp" data-step="broll"></span>B-Roll</h3>
+    <p class="muted erklaerung">Claude schaut sich Frames jedes B-Roll-Clips an (nur einmal pro Datei, wird gecacht) und legt passende Schnittbilder wortgenau auf die Aussagen – Schnittstellen im Interview werden bevorzugt verdeckt.</p>
     <div class="row">
       <button id="btn-broll">Analysieren + Zuordnen</button>
     </div>
@@ -156,6 +162,7 @@
 
   <section>
     <h3><span class="lamp" data-step="untertitel"></span>Untertitel</h3>
+    <p class="muted erklaerung">Erzeugt aus den gewählten Segmenten eine SRT-Datei auf der Reel-Zeitachse und lässt Claude Rechtschreibung und Fachbegriffe korrigieren – das Timing bleibt unangetastet.</p>
     <div class="row">
       <button id="btn-subtitles">SRT erzeugen + korrigieren</button>
       <a id="link-srt" class="hidden" download>reel.srt</a>
@@ -166,6 +173,7 @@
 
   <section>
     <h3><span class="lamp" data-step="musik"></span>Musik</h3>
+    <p class="muted erklaerung">Wählt aus deiner <code>music_library/</code> einen passenden Track (nach Tags und Reel-Inhalt) – nur wenn „Musik“ in der Konfiguration aktiv ist. Liegt im Export leise (−18 dB) auf A3.</p>
     <div class="row">
       <button id="btn-music">Track von Claude wählen lassen</button>
       <select id="music-select"><option value="">– manuell wählen –</option></select>
@@ -175,6 +183,7 @@
 
   <section>
     <h3><span class="lamp" data-step="export"></span>Export</h3>
+    <p class="muted erklaerung">Baut aus allem die Premiere-XML: beide Kameras bildsynchron auf V1/V2, B-Roll auf V3, DJI-Ton auf A1 – gebündelt in einer eigenen Ablage. Danach in Premiere importieren.</p>
     <div class="row">
       <button id="btn-export" class="primary">FCPXML erzeugen</button>
       <a id="link-xml" class="hidden" download>Premiere-XML herunterladen</a>

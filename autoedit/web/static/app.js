@@ -137,7 +137,8 @@ function renderStatusChain() {
     const st = overview.status[step] || { status: "offen", detail: "" };
     const div = document.createElement("div");
     div.className = `step ${st.status}`;
-    div.title = st.detail || "";
+    div.title = STEP_HINWEISE[step] +
+      (st.detail ? `\n\nLetzter Lauf: ${st.detail}` : "");
     div.innerHTML = `<span class="lamp"></span> ${label}
       <button class="one" title="Nur diesen Schritt ausführen">▶</button>
       <button class="from" title="Ab hier bis zum Ende ausführen (Fehler in B-Roll/Untertitel/Musik werden übersprungen)">⏩</button>`;
