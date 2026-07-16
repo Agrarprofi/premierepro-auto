@@ -218,8 +218,10 @@ def run_all(project: str, progress=None, fortsetzen: bool = True,
         try:
             results[step] = run_step(project, step, progress=sub_progress,
                                      **kwargs)
-        except jobs.JobAbgebrochen:
-            raise  # Nutzer-Abbruch geht IMMER durch, auch bei B-Roll & Co.
+        except (jobs.JobAbgebrochen, claude_client.ApiGuthabenLeer):
+            # Nutzer-Abbruch und leeres API-Guthaben gehen IMMER durch -
+            # auch bei optionalen Schritten wäre Weitermachen sinnlos.
+            raise
         except Exception as exc:  # noqa: BLE001 - optionale Schritte tolerieren
             if step not in OPTIONAL_STEPS:
                 raise
@@ -276,6 +278,13 @@ def run_batch(projects: list[str], progress=None, fortsetzen: bool = True,
             except jobs.JobAbgebrochen:
                 log(name, "Warteschlange: vom Nutzer abgebrochen")
                 raise  # bricht die GANZE Warteschlange ab
+            except claude_client.ApiGuthabenLeer:
+                # Ohne Guthaben scheitern auch alle weiteren Projekte -
+                # sofort stoppen statt die Nacht mit Fehlläufen zu füllen.
+                # Fortsetzen: Guthaben aufladen, Warteschlange neu starten
+                # (fertige Schritte/Projekte werden übersprungen).
+                log(name, "Warteschlange GESTOPPT: API-Guthaben leer")
+                raise
             except Exception as exc:  # noqa: BLE001 - Nacht-Modus: weiter!
                 results[name] = f"FEHLER: {type(exc).__name__}: {exc}"
                 log(name, f"Warteschlange: Projekt abgebrochen – {exc}")

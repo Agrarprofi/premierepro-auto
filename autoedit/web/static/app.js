@@ -23,7 +23,14 @@ function fmtSec(s) { return `${Number(s).toFixed(1)} s`; }
 
 // ------------------------------------------------------------ Projekte
 
-const batchSelection = new Set();
+// Auswahl übersteht Reload/Neustart: nach z.B. einem Guthaben-Stopp
+// reicht ein Klick auf "Nacheinander abarbeiten" zum Fortsetzen.
+const batchSelection = new Set(
+  JSON.parse(localStorage.getItem("batchSelection") || "[]"));
+
+function saveBatchSelection() {
+  localStorage.setItem("batchSelection", JSON.stringify([...batchSelection]));
+}
 
 async function loadProjects() {
   const projects = await api("/api/projects");
@@ -43,6 +50,7 @@ async function loadProjects() {
       e.stopPropagation();
       if (e.target.checked) batchSelection.add(p.name);
       else batchSelection.delete(p.name);
+      saveBatchSelection();
     };
     if (p.name === currentProject) li.classList.add("active");
     li.onclick = () => openProject(p.name);
@@ -661,6 +669,7 @@ $("#btn-delete-projects").onclick = async () => {
       const r = await api(`/api/projects/${p}`, { method: "DELETE" });
       ziel = r.papierkorb;
       batchSelection.delete(p);
+      saveBatchSelection();
       if (currentProject === p) {
         currentProject = null;
         $("#main").innerHTML = `<p class="muted">Projekt links auswählen

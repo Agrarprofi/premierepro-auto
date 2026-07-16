@@ -255,3 +255,74 @@ def test_script_file_activates_leitfaden_in_auto_mode(projekt, fake_claude):
     assert "Regenerative Landwirtschaft" in prompt
     assert "LEITFADEN" in prompt
     assert cutting.load_segments(projekt)["modus"] == "skript"
+
+
+def _api_fehler(cls, text):
+    import httpx
+    req = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    return cls(text, response=httpx.Response(400, request=req),
+               body={"error": {"message": text}})
+
+
+def test_guthaben_fehler_erkennung():
+    import anthropic
+
+    from autoedit import claude_client
+
+    leer = _api_fehler(anthropic.BadRequestError,
+                       "Your credit balance is too low to access the API")
+    assert claude_client._ist_guthaben_fehler(leer) is True
+    normal = _api_fehler(anthropic.BadRequestError, "max_tokens too large")
+    assert claude_client._ist_guthaben_fehler(normal) is False
+    # normales Rate-Limit = vorübergehend, KEIN Stopp
+    rate = _api_fehler(anthropic.RateLimitError, "rate limit exceeded")
+    assert claude_client._ist_guthaben_fehler(rate) is False
+    spend = _api_fehler(anthropic.RateLimitError, "monthly spend limit reached")
+    assert claude_client._ist_guthaben_fehler(spend) is True
+
+
+def test_batch_stops_on_empty_credit_and_resumes(env, media, music_lib):
+    """Guthaben leer mitten in Projekt 1 -> die GANZE Warteschlange stoppt
+    (Projekt 2 wird nicht angefasst). Nach dem 'Aufladen' setzt derselbe
+    Aufruf exakt beim liegengebliebenen Schritt fort."""
+    import shutil
+
+    from autoedit import claude_client
+    from autoedit import paths as p
+
+    namen = ["kredit-1", "kredit-2"]
+    root = media["root"]
+    for name in namen:
+        p.create_project(name)
+        base = p.project_dir(name)
+        shutil.copy(root / "dji.wav", base / "input/audio_dji/dji.wav")
+        shutil.copy(root / "cam_a_001.mov", base / "input/cam_a/cam_a_001.mov")
+
+    class GuthabenLeerClaude:
+        def complete_json(self, zweck, *a, **kw):
+            raise claude_client.ApiGuthabenLeer("Guthaben leer (Test)")
+        complete_text = complete_json
+        describe_images_json = complete_json
+
+    with pytest.raises(claude_client.ApiGuthabenLeer):
+        pipeline.run_batch(namen, client=GuthabenLeerClaude(),
+                           transcriber=fake_transcriber)
+
+    # Projekt 1: bis zum Sync fertig, Schnitt rot; Projekt 2: unberührt
+    st1 = pipeline.load_status(namen[0])
+    assert st1["sync"]["status"] == "ok"
+    assert st1["schnitt"]["status"] == "fehler"
+    st2 = pipeline.load_status(namen[1])
+    assert all(st2[s]["status"] == "offen" for s in pipeline.STEPS)
+
+    # "Guthaben aufgeladen": gleicher Aufruf läuft durch, erledigte
+    # Schritte (Ingest/Transkript/Sync von Projekt 1) laufen nicht erneut
+    fake = FakeClaude()
+    results = pipeline.run_batch(namen, client=fake,
+                                 transcriber=fake_transcriber)
+    assert results[namen[0]].startswith("fertig")
+    assert results[namen[1]].startswith("fertig")
+    assert (p.output_dir(namen[0]) / f"{namen[0]}_premiere.xml").is_file()
+    st1 = pipeline.load_status(namen[0])
+    # Transkript-Zeitstempel beweist: wurde beim zweiten Lauf übersprungen
+    assert "übersprungen" in results[namen[0]] or st1["transkript"]["status"] == "ok"

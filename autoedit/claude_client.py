@@ -31,6 +31,34 @@ MODEL_PRICES_USD_PER_MTOK: dict[str, tuple[float, float]] = {
 _cost_lock = threading.Lock()
 
 
+class ApiGuthabenLeer(RuntimeError):
+    """Anthropic-Guthaben aufgebraucht (oder Key ungültig): Jeder weitere
+    Aufruf würde genauso scheitern. Stoppt Pipeline UND Warteschlange
+    sofort - nach dem Aufladen einfach fortsetzen, bereits erledigte
+    Schritte/Projekte bleiben erhalten."""
+
+
+def _ist_guthaben_fehler(exc: Exception) -> bool:
+    """Fehler, bei denen Weiterprobieren sinnlos ist (kein Guthaben,
+    Spend-Limit erreicht, Key ungültig) - im Gegensatz zu vorübergehenden
+    Fehlern wie Rate-Limits oder Netzwerk-Aussetzern."""
+    try:
+        import anthropic
+    except ImportError:
+        return False
+    if isinstance(exc, anthropic.AuthenticationError):
+        return True
+    text = str(exc).lower()
+    if isinstance(exc, (anthropic.BadRequestError,
+                        anthropic.PermissionDeniedError)):
+        return ("credit" in text or "billing" in text or "balance" in text
+                or "spend" in text)
+    if isinstance(exc, anthropic.RateLimitError):
+        # normales Rate-Limit = vorübergehend; Monats-Ausgabenlimit nicht
+        return "spend limit" in text
+    return False
+
+
 def estimate_cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
     prices = MODEL_PRICES_USD_PER_MTOK.get(model)
     if prices is None:
@@ -112,7 +140,18 @@ class ClaudeClient:
         }
         if system:
             kwargs["system"] = system
-        response = self.client.messages.create(**kwargs)
+        try:
+            response = self.client.messages.create(**kwargs)
+        except Exception as exc:
+            if _ist_guthaben_fehler(exc):
+                raise ApiGuthabenLeer(
+                    "Anthropic-API-Guthaben aufgebraucht oder Key ungültig "
+                    "– Lauf gestoppt, damit nichts sinnlos weiterläuft. "
+                    "Nach dem Aufladen einfach wieder ▶ Alles ausführen "
+                    "bzw. die Warteschlange starten: es geht genau beim "
+                    f"letzten Stand weiter. (Original-Fehler: {exc})"
+                ) from exc
+            raise
         usage = getattr(response, "usage", None)
         if usage is not None:
             record_usage(
