@@ -321,3 +321,23 @@ def test_preset_delete_api(client, projekt):
     assert res.status_code == 200
     assert "test-preset" not in res.json()
     assert client.delete("/api/presets/test-preset").status_code == 404
+
+
+def test_input_files_watch_endpoint(client, projekt):
+    """Datei-Watcher: Verzeichnis-Liste + Fingerprint ändern sich, sobald
+    im input-Ordner etwas dazukommt (Dashboard pollt und aktualisiert)."""
+    from autoedit import paths as p
+
+    r1 = client.get(f"/api/projects/{projekt}/input_files").json()
+    assert "cam_a_001.mov" in r1["dateien"]["cam_a"]
+    assert r1["fingerprint"]
+
+    # unverändert -> gleicher Fingerprint
+    r1b = client.get(f"/api/projects/{projekt}/input_files").json()
+    assert r1b["fingerprint"] == r1["fingerprint"]
+
+    # neue Datei im Finder abgelegt -> neuer Fingerprint, Datei gelistet
+    (p.input_dir(projekt, "broll") / "frisch.mp4").write_bytes(b"x" * 128)
+    r2 = client.get(f"/api/projects/{projekt}/input_files").json()
+    assert r2["fingerprint"] != r1["fingerprint"]
+    assert "frisch.mp4" in r2["dateien"]["broll"]

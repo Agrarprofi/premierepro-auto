@@ -112,6 +112,10 @@ button.danger { color: var(--err); border-color: var(--err); background: none; }
 button.danger:hover { background: var(--err); color: #fff; }
 
 .files { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: .6rem; font-size: .85rem; }
+.ingest-hint { grid-column: 1 / -1; margin: 0; padding: .45rem .7rem;
+  border: 1px solid var(--run); border-left: 4px solid var(--run);
+  border-radius: 6px; font-size: .85rem; }
+.ingest-hint button { margin-left: .5rem; padding: 0 .5rem; font-size: .8rem; }
 .files h4 { margin: 0 0 .2rem; font-size: .85rem; }
 .files ul { margin: 0; padding-left: 1.1rem; }
 

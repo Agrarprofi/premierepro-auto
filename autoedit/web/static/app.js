@@ -68,6 +68,33 @@ async function openProject(name) {
   bindProjectEvents();
   await refreshOverview();
   await attachRunningJob();
+  startFilesWatch();
+}
+
+// ---------------------------------------------- Input-Ordner überwachen
+
+let filesFingerprint = null;
+let filesTimer = null;
+
+function startFilesWatch() {
+  // Erkennt Dateien, die im Finder in input/ gelegt (oder entfernt)
+  // werden, und aktualisiert die Ansicht ohne manuelles Neuladen.
+  clearInterval(filesTimer);
+  filesFingerprint = null;
+  const tick = async () => {
+    if (!currentProject || document.hidden) return;
+    try {
+      const r = await api(`/api/projects/${currentProject}/input_files`);
+      if (filesFingerprint === null) {
+        filesFingerprint = r.fingerprint;
+      } else if (r.fingerprint !== filesFingerprint) {
+        filesFingerprint = r.fingerprint;
+        await refreshOverview();
+      }
+    } catch (e) { /* Server kurz weg – nächster Tick */ }
+  };
+  tick();
+  filesTimer = setInterval(tick, 4000);
 }
 
 async function refreshOverview() {
@@ -171,6 +198,25 @@ function renderConfig() {
 function renderFiles() {
   const div = $("#files");
   div.innerHTML = "";
+  // Neue/entfernte Dateien, die der Ingest noch nicht kennt? Deutlich
+  // darauf hinweisen - sonst wundert man sich, warum sie in der
+  // Pipeline nicht auftauchen.
+  const bekannt = new Set((overview.media?.clips || []).map(c => c.name));
+  const alle = Object.values(overview.dateien).flat().map(f => f.name);
+  const neue = alle.filter(n => !bekannt.has(n)).length;
+  const geloescht = overview.media
+    ? [...bekannt].filter(n => !alle.includes(n)).length : 0;
+  if (neue || geloescht) {
+    const hint = document.createElement("p");
+    hint.className = "ingest-hint";
+    hint.innerHTML = `📥 ${neue ? `${neue} neue Datei(en)` : ""}`
+      + `${neue && geloescht ? ", " : ""}`
+      + `${geloescht ? `${geloescht} entfernte Datei(en)` : ""}`
+      + ` – noch nicht eingelesen. `
+      + `<button>▶ Jetzt Ingest ausführen</button>`;
+    $("button", hint).onclick = () => runStep("ingest");
+    div.appendChild(hint);
+  }
   const labels = { cam_a: "Kamera A", cam_b: "Kamera B",
                    audio_dji: "DJI-Audio", broll: "B-Roll" };
   for (const [role, label] of Object.entries(labels)) {

@@ -106,6 +106,31 @@ def put_config(name: str, updates: dict[str, Any]) -> dict:
         raise _err(exc)
 
 
+@app.get("/api/projects/{name}/input_files")
+def input_files(name: str) -> dict:
+    """Leichtgewichtige Liste der Input-Dateien (nur Verzeichnis-Scan).
+
+    Das Dashboard pollt diesen Endpoint und aktualisiert sich sofort,
+    wenn im Finder Dateien dazukommen oder verschwinden. Der Fingerprint
+    (Name+Größe+mtime) macht den Vergleich billig."""
+    _project_or_404(name)
+    import hashlib
+
+    daten: dict[str, list[str]] = {}
+    teile: list[str] = []
+    for role in paths.ROLES:
+        namen = []
+        for f in ingest.clips_for_role(name, role):
+            st = f.stat()
+            namen.append(f.name)
+            teile.append(f"{role}/{f.name}:{st.st_size}:{int(st.st_mtime)}")
+        daten[role] = namen
+    return {
+        "dateien": daten,
+        "fingerprint": hashlib.md5("|".join(teile).encode()).hexdigest(),
+    }
+
+
 @app.get("/api/projects/{name}/overview")
 def overview(name: str) -> dict:
     _project_or_404(name)
