@@ -34,7 +34,7 @@ async function loadProjects() {
     const done = Object.values(p.status).filter(s => s === "ok").length;
     const total = Object.keys(p.status).length;
     li.innerHTML = `<input type="checkbox" class="batch-check"
-        title="Für die Warteschlange vormerken">
+        title="Projekt auswählen – für die Warteschlange oder zum Löschen">
       <span class="pname">${p.name}</span>
       <span class="muted">${done}/${total}</span>`;
     const cb = $("input", li);
@@ -640,6 +640,32 @@ function bindProjectEvents() {
       await api(`/api/projects/${currentProject}/log`);
   };
 }
+
+$("#btn-delete-projects").onclick = async () => {
+  const projekte = [...batchSelection];
+  if (!projekte.length) {
+    return alert("Zuerst die Projekte ankreuzen, die gelöscht werden sollen.");
+  }
+  const liste = projekte.map(p => `  – ${p}`).join("\n");
+  if (!confirm(
+      `${projekte.length} Projekt(e) WIRKLICH löschen?\n\n${liste}\n\n` +
+      "Der komplette Projektordner wird unwiderruflich gelöscht – " +
+      "inklusive aller Dateien in input/ und aller Ergebnisse!")) {
+    return;
+  }
+  for (const p of projekte) {
+    try {
+      await api(`/api/projects/${p}`, { method: "DELETE" });
+      batchSelection.delete(p);
+      if (currentProject === p) {
+        currentProject = null;
+        $("#main").innerHTML = `<p class="muted">Projekt links auswählen
+          oder neu anlegen.</p>`;
+      }
+    } catch (e) { alert(`${p}: ${e.message}`); }
+  }
+  loadProjects();
+};
 
 $("#btn-batch").onclick = async () => {
   const projekte = [...batchSelection];

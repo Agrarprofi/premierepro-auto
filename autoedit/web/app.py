@@ -77,6 +77,19 @@ def create_project(body: ProjectCreate) -> dict:
     return {"name": body.name, "pfad": str(paths.project_dir(body.name))}
 
 
+@app.delete("/api/projects/{name}")
+def delete_project(name: str) -> dict:
+    """Projekt unwiderruflich löschen (Frontend fragt vorher nach)."""
+    _project_or_404(name)
+    running = (jobs.MANAGER.running_for(f"{name}:")
+               or jobs.MANAGER.running_for("batch:"))
+    if running:
+        raise HTTPException(
+            409, f"Es läuft ein Job ({running.name}) – erst abbrechen.")
+    paths.delete_project(name)
+    return {"geloescht": name}
+
+
 @app.get("/api/projects/{name}/config")
 def get_config(name: str) -> dict:
     return config.load_config(_project_or_404(name))

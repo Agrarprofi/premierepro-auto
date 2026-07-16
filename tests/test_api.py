@@ -262,3 +262,35 @@ def test_script_save_api(client, projekt):
     res = client.put(url, json={"text": ""})
     assert res.json()["skript_datei"] is None
     assert not (p.project_dir(projekt) / "skript.txt").exists()
+
+
+def test_delete_project_api(client, projekt):
+    from autoedit import paths as p
+
+    assert p.project_exists(projekt)
+    res = client.delete(f"/api/projects/{projekt}")
+    assert res.status_code == 200
+    assert res.json()["geloescht"] == projekt
+    assert not p.project_exists(projekt)
+    # zweites Löschen: Projekt existiert nicht mehr
+    assert client.delete(f"/api/projects/{projekt}").status_code == 404
+
+
+def test_delete_project_blocked_while_job_running(client, projekt):
+    import threading
+
+    from autoedit import jobs
+    from autoedit import paths as p
+
+    ev = threading.Event()
+    job = jobs.MANAGER.start(f"{projekt}:warte", lambda pr: ev.wait(5))
+    try:
+        res = client.delete(f"/api/projects/{projekt}")
+        assert res.status_code == 409
+        assert p.project_exists(projekt)
+    finally:
+        ev.set()
+        for _ in range(100):
+            if jobs.MANAGER.get(job.id).status != "laeuft":
+                break
+            time.sleep(0.05)

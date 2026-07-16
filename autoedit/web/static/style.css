@@ -108,6 +108,8 @@ section > details > summary { font-size: 1rem; font-weight: 600;
   color: var(--err); background: none; border: 1px solid var(--line);
   border-radius: 4px; cursor: pointer; }
 .mini-cfr { padding: 0 .3rem; font-size: .72rem; cursor: pointer; }
+button.danger { color: var(--err); border-color: var(--err); background: none; }
+button.danger:hover { background: var(--err); color: #fff; }
 
 .files { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: .6rem; font-size: .85rem; }
 .files h4 { margin: 0 0 .2rem; font-size: .85rem; }

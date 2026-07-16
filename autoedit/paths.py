@@ -68,3 +68,16 @@ def list_projects() -> list[str]:
 
 def project_exists(name: str) -> bool:
     return valid_project_name(name) and project_dir(name).is_dir()
+
+
+def delete_project(name: str) -> None:
+    """Kompletten Projektordner löschen (inkl. input/ und output/).
+
+    project_dir() validiert den Namen - kein Pfad außerhalb von
+    projects/ erreichbar.
+    """
+    import shutil
+
+    d = project_dir(name)
+    if d.is_dir():
+        shutil.rmtree(d)
