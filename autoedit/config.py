@@ -22,6 +22,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # Sprechpausen INNERHALB eines Segments ab dieser Länge automatisch
     # rausschneiden (am echten Audio gemessen); 0 = aus
     "pausen_schnitt_sek": 1.0,
+    # Füllwort-Entfernung: Pausen über ab_sek werden auf ziel_sek gekürzt;
+    # optionale Liste = Sprechstil-Wörter wie "halt"/"eben" mit erkennen
+    "fuellwort_pause_ab_sek": 1.5,
+    "fuellwort_pause_ziel_sek": 0.4,
+    "fuellwort_optionale_liste": False,
     # Freitext-Vorgaben für die Reel-Auswahl (z.B. "Fokus auf Bodengesundheit")
     "schnitt_hinweise": "",
     "musik_aktiv": False,
@@ -93,7 +98,11 @@ def _validate(cfg: dict[str, Any]) -> None:
         raise ValueError("zoom_staerke_prozent muss zwischen 0 und 40 liegen")
     if not isinstance(cfg["schnitt_hinweise"], str) or len(cfg["schnitt_hinweise"]) > 2000:
         raise ValueError("schnitt_hinweise muss ein Text (max. 2000 Zeichen) sein")
-    for key in ("musik_aktiv", "untertitel_aktiv"):
+    if not (0.5 <= float(cfg["fuellwort_pause_ab_sek"]) <= 10):
+        raise ValueError("fuellwort_pause_ab_sek muss zwischen 0.5 und 10 liegen")
+    if not (0.1 <= float(cfg["fuellwort_pause_ziel_sek"]) <= 2):
+        raise ValueError("fuellwort_pause_ziel_sek muss zwischen 0.1 und 2 liegen")
+    for key in ("musik_aktiv", "untertitel_aktiv", "fuellwort_optionale_liste"):
         if not isinstance(cfg[key], bool):
             raise ValueError(f"{key} muss true/false sein")
     for key in ("claude_modell", "whisper_modell"):

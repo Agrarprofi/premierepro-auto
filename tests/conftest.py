@@ -122,6 +122,8 @@ def env(tmp_path, monkeypatch) -> Path:
     monkeypatch.setenv("AUTOEDIT_PROJECTS", str(tmp_path / "projects"))
     monkeypatch.setenv("AUTOEDIT_MUSIC", str(tmp_path / "music_library"))
     monkeypatch.setenv("AUTOEDIT_PRESETS", str(tmp_path / "presets"))
+    monkeypatch.setenv("AUTOEDIT_FUELLWOERTER",
+                       str(tmp_path / "fuellwoerter.yaml"))
     monkeypatch.delenv("AUTOEDIT_CLAUDE_MODEL", raising=False)
     return tmp_path
 
