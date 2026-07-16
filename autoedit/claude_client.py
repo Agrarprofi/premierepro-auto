@@ -95,6 +95,23 @@ def load_costs(project: str) -> dict:
     return json.loads(f.read_text(encoding="utf-8"))
 
 
+def ensure_list(raw: Any) -> list:
+    """Claude-Antworten robust als Liste interpretieren.
+
+    Erwartet wird ein JSON-Array; bei nur einem Treffer liefert Claude
+    aber gelegentlich ein einzelnes Objekt, oder es verpackt die Liste
+    in {"matches": [...]} – beides wird toleriert statt abzubrechen.
+    """
+    if isinstance(raw, list):
+        return raw
+    if isinstance(raw, dict):
+        listen = [v for v in raw.values() if isinstance(v, list)]
+        if len(listen) == 1:
+            return listen[0]
+        return [raw]
+    raise ValueError(f"Unerwartete Claude-Antwort (kein Array): {raw!r}")
+
+
 def extract_json(text: str) -> Any:
     """Erstes JSON-Objekt/-Array aus einer Antwort extrahieren (robust
     gegen Prosa oder ```json-Zäune drumherum)."""

@@ -140,9 +140,8 @@ def analyze_statements(project: str, progress=None, client=None) -> dict:
         '"text": "...", "punkte": <0-10>, "kategorie": "...", '
         '"qualitaet": "...", "kommentar": "..."}]'
     )
-    raw = client.complete_json("aussagen_analyse", prompt, max_tokens=8192)
-    if not isinstance(raw, list):
-        raise ValueError(f"Unerwartete Claude-Antwort (kein Array): {raw!r}")
+    raw = claude_client.ensure_list(
+        client.complete_json("aussagen_analyse", prompt, max_tokens=8192))
 
     aussagen = []
     for item in raw:
@@ -519,9 +518,8 @@ def select_segments(project: str, modus: str = "auto", skript: str | None = None
     prompt = (_prompt_script(transcript, skript, reel_laenge, cfg, statements)
               if modus == "skript"
               else _prompt_auto(transcript, reel_laenge, cfg, statements))
-    raw = client.complete_json("reel_auswahl", prompt, max_tokens=4096)
-    if not isinstance(raw, list):
-        raise ValueError(f"Unerwartete Claude-Antwort (kein Array): {raw!r}")
+    raw = claude_client.ensure_list(
+        client.complete_json("reel_auswahl", prompt, max_tokens=4096))
 
     words = transcript["woerter"]
     segmente = []

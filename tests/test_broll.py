@@ -148,3 +148,32 @@ def test_analyze_broll_cached_per_file(projekt, fake_claude):
     f.unlink()
     result = broll.analyze_broll(projekt)
     assert [e["name"] for e in result["clips"]] == ["broll_traktor.mp4"]
+
+
+def test_ensure_list_tolerates_claude_formats():
+    from autoedit import claude_client
+
+    assert claude_client.ensure_list([1, 2]) == [1, 2]
+    # einzelnes Objekt statt Array (der Fehler aus dem LKOE-Log)
+    einzel = {"transkript_zeit": 3.0, "broll_datei": "x.mov"}
+    assert claude_client.ensure_list(einzel) == [einzel]
+    # Liste in ein Objekt verpackt
+    assert claude_client.ensure_list({"matches": [einzel]}) == [einzel]
+    with pytest.raises(ValueError):
+        claude_client.ensure_list("nur Text")
+
+
+def test_match_broll_accepts_single_object(projekt, fake_claude):
+    """Claude liefert bei nur einem Treffer manchmal ein Objekt statt
+    einer Ein-Element-Liste - das darf den Schritt nicht abbrechen."""
+    from tests.conftest import FakeClaude, prepared_project
+
+    fake = FakeClaude(broll_matches={
+        "transkript_zeit": 4.0,
+        "broll_datei": "input/broll/broll_traktor.mp4",
+        "broll_einstieg": 1.0, "begruendung": "einzelner Treffer",
+    })
+    prepared_project(projekt, fake, with_broll=True)
+    matches = broll.load_matches(projekt)["matches"]
+    assert len(matches) == 1
+    assert matches[0]["broll_datei"].endswith("broll_traktor.mp4")

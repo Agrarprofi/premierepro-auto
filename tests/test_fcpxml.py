@@ -23,7 +23,8 @@ def _clipitems(track):
 def test_generate_fcpxml_frame_accuracy(projekt, fake_claude):
     prepared_project(projekt, fake_claude)
     out = fcpxml.generate_fcpxml(projekt)
-    assert out.name == "testprojekt_premiere.xml"
+    assert out.name.startswith("testprojekt_premiere_")
+    assert out.name.endswith(".xml")
 
     tree = ET.parse(out)
     seq = tree.getroot().find(".//sequence")

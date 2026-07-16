@@ -600,8 +600,22 @@ def generate_fcpxml(project: str, progress=None) -> Path:
 \t</project>
 </xmeml>
 """
-    out = paths.output_dir(project) / f"{project}{FCPXML_SUFFIX}"
+    # Zeitstempel im Namen: jeder Export bleibt erhalten und ist in
+    # Premiere eindeutig zuordenbar (alte Exporte manuell löschen).
+    from datetime import datetime
+
+    stempel = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    out = paths.output_dir(project) / f"{project}_premiere_{stempel}.xml"
     out.write_text(xml, encoding="utf-8")
     if progress:
         progress(1.0, f"FCPXML geschrieben: {out.name}")
     return out
+
+
+def latest_fcpxml(project: str) -> Path | None:
+    """Neueste exportierte XML des Projekts (fürs Dashboard/Download)."""
+    files = sorted(
+        paths.output_dir(project).glob(f"{project}_premiere*.xml"),
+        key=lambda f: f.stat().st_mtime,
+    )
+    return files[-1] if files else None

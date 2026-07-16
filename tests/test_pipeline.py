@@ -20,7 +20,8 @@ def test_run_all_end_to_end(projekt, music_lib):
     )
 
     out = paths.output_dir(projekt)
-    assert (out / "testprojekt_premiere.xml").is_file()
+    from autoedit import fcpxml
+    assert fcpxml.latest_fcpxml(projekt) is not None
     assert (out / "reel.srt").is_file()
     assert (out / "reel_korrigiert.srt").is_file()
     assert (out / "log.txt").is_file()
@@ -29,7 +30,7 @@ def test_run_all_end_to_end(projekt, music_lib):
     assert all(status[s]["status"] == "ok" for s in pipeline.STEPS), status
 
     # XML enthält alle 6 Spuren und mind. je 1 Clipitem auf V1/A1/A3
-    tree = ET.parse(out / "testprojekt_premiere.xml")
+    tree = ET.parse(fcpxml.latest_fcpxml(projekt))
     seq = tree.getroot().find(".//sequence")
     assert len(seq.findall("media/video/track")) == 3
     atracks = seq.findall("media/audio/track")
@@ -55,7 +56,8 @@ def test_run_all_skips_optional_steps(projekt):
     assert "übersprungen" in results["broll"]
     assert "übersprungen" in results["untertitel"]
     assert "übersprungen" in results["musik"]
-    assert (paths.output_dir(projekt) / "testprojekt_premiere.xml").is_file()
+    from autoedit import fcpxml
+    assert fcpxml.latest_fcpxml(projekt) is not None
 
 
 def test_step_error_sets_status(projekt):
@@ -112,7 +114,7 @@ def test_run_all_resumes_after_failure(projekt, music_lib):
     for step in ("ingest", "transkript", "sync", "schnitt"):
         assert "bereits erledigt" in results[step], results
     assert "Zuordnungen" in results["broll"]
-    assert results["export"].startswith("testprojekt_premiere.xml")
+    assert results["export"].startswith("testprojekt_premiere")
     # Claude wurde nur für die nachgeholten Schritte gebraucht
     assert "reel_auswahl" not in fake2.calls
     assert "broll_matching" in fake2.calls
@@ -154,7 +156,7 @@ def test_run_all_ab_schritt(projekt, music_lib):
         assert "vor Startschritt" in results[step], results
     # ab broll wurde neu gerechnet, obwohl alles grün war
     assert "Zuordnungen" in results["broll"]
-    assert results["export"].startswith("testprojekt_premiere.xml")
+    assert results["export"].startswith("testprojekt_premiere")
     assert "reel_auswahl" not in fake2.calls
     assert "broll_matching" in fake2.calls
 
@@ -168,7 +170,7 @@ def test_run_all_skips_empty_music_library(projekt):
     results = pipeline.run_all(projekt, client=FakeClaude(),
                                transcriber=fake_transcriber)
     assert "keine Tracks" in results["musik"]
-    assert results["export"].startswith("testprojekt_premiere.xml")
+    assert results["export"].startswith("testprojekt_premiere")
 
 
 def test_run_all_tolerates_optional_step_failure(projekt, monkeypatch):
@@ -183,7 +185,7 @@ def test_run_all_tolerates_optional_step_failure(projekt, monkeypatch):
     results = pipeline.run_all(projekt, client=FakeClaude(),
                                transcriber=fake_transcriber)
     assert results["broll"].startswith("FEHLER, übersprungen")
-    assert results["export"].startswith("testprojekt_premiere.xml")
+    assert results["export"].startswith("testprojekt_premiere")
     status = pipeline.load_status(projekt)
     assert status["broll"]["status"] == "fehler"
     assert status["export"]["status"] == "ok"
@@ -231,7 +233,8 @@ def test_run_batch_continues_after_failure(env, media, music_lib):
 
     assert results[gut].startswith("fertig")
     assert results[kaputt].startswith("FEHLER")
-    assert (p.output_dir(gut) / f"{gut}_premiere.xml").is_file()
+    from autoedit import fcpxml
+    assert fcpxml.latest_fcpxml(gut) is not None
     # Fortschritt nennt Projekt und Position in der Warteschlange
     assert any(m.startswith(f"[1/2] {gut}:") for _, m in meldungen)
     assert any("2/2 Projekte" not in m and "1/2 Projekte erfolgreich" in m
@@ -322,7 +325,8 @@ def test_batch_stops_on_empty_credit_and_resumes(env, media, music_lib):
                                  transcriber=fake_transcriber)
     assert results[namen[0]].startswith("fertig")
     assert results[namen[1]].startswith("fertig")
-    assert (p.output_dir(namen[0]) / f"{namen[0]}_premiere.xml").is_file()
+    from autoedit import fcpxml as _fx
+    assert _fx.latest_fcpxml(namen[0]) is not None
     st1 = pipeline.load_status(namen[0])
     # Transkript-Zeitstempel beweist: wurde beim zweiten Lauf übersprungen
     assert "übersprungen" in results[namen[0]] or st1["transkript"]["status"] == "ok"

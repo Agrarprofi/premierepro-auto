@@ -11,8 +11,8 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from .. import (broll, claude_client, config, cutting, ffmpeg_utils, ingest,
-                jobs, music, paths, pipeline, subtitles, sync_audio,
+from .. import (broll, claude_client, config, cutting, fcpxml, ffmpeg_utils,
+                ingest, jobs, music, paths, pipeline, subtitles, sync_audio,
                 transcribe)
 
 # .env schon beim Serverstart laden, damit die API-Key-Anzeige im
@@ -138,6 +138,7 @@ def overview(name: str) -> dict:
         "broll_matches": broll.load_matches(name),
         "musik": music.load_selection(name),
         "export_warnungen": warnungen,
+        "xml_datei": getattr(fcpxml.latest_fcpxml(name), "name", None),
         "kosten": claude_client.load_costs(name),
         "transcript_vorhanden": transcribe.load_transcript(name) is not None,
     }

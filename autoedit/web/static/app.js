@@ -403,11 +403,13 @@ function renderMusic() {
 
 function renderExport() {
   const link = $("#link-xml");
-  const xmlName = `${currentProject}_premiere.xml`;
-  const done = overview.status.export?.status === "ok";
-  link.classList.toggle("hidden", !done);
-  link.href = `/api/projects/${currentProject}/files/${xmlName}`;
-  link.download = xmlName;
+  const xmlName = overview.xml_datei;
+  link.classList.toggle("hidden", !xmlName);
+  if (xmlName) {
+    link.href = `/api/projects/${currentProject}/files/${xmlName}`;
+    link.download = xmlName;
+    link.textContent = xmlName;
+  }
   const w = overview.export_warnungen || [];
   $("#export-warnungen").innerHTML = w.length
     ? '<p class="muted">⚠ ' + w.join("<br>⚠ ") + "</p>"

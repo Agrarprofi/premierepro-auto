@@ -58,7 +58,7 @@ projects/<projektname>/
     ├── segments.json      # gewählte Reel-Segmente (Dashboard: an/aus, Reihenfolge)
     ├── broll_matches.json
     ├── reel.srt / reel_korrigiert.srt
-    ├── <projekt>_premiere.xml   # → Premiere: Datei > Importieren
+    ├── <projekt>_premiere_<zeitstempel>.xml   # → Premiere: Datei > Importieren
     │                            #   (landet in Ablage "<projekt> – autoedit")
     ├── costs.json / log.txt
     └── preview_*.mp4      # Sync- und Schnitt-Vorschauen

@@ -262,9 +262,8 @@ def match_broll(project: str, progress=None, client=None) -> dict:
     )
     if progress:
         progress(0.2, "Frage Claude nach B-Roll-Zuordnungen …")
-    raw = client.complete_json("broll_matching", prompt, max_tokens=2048)
-    if not isinstance(raw, list):
-        raise ValueError(f"Unerwartete Claude-Antwort (kein Array): {raw!r}")
+    raw = claude_client.ensure_list(
+        client.complete_json("broll_matching", prompt, max_tokens=2048))
 
     by_file = {c["datei"]: c for c in index["clips"]}
     by_name = {c["name"]: c for c in index["clips"]}
